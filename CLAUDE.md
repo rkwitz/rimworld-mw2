@@ -10,4 +10,5 @@ Read `docs/ARCHITECTURE.md` first, then `docs/ROADMAP.md` for the current milest
   `protocol/examples.ndjson` and the C# side together; `cargo test` in `bridge/` must pass.
 - RimWorld state is only touched on the main thread (`BridgeGameComponent`), never from the socket thread.
 - Build checks: `python scripts/setup.py build-mod` and `cargo test` in `bridge/`.
+  `python scripts/setup.py test-mod` also builds the mod and runs its tests in `tests/`.
 - Offline only: never connect modded clients to online services.

@@ -258,6 +258,10 @@ game_modding\                 your workspace folder, may hold other projects too
   examples.
 - Tests: `cargo test` in `bridge\`, `cargo test -p rimworld_world` in `engine\`, and
   `python scripts\setup.py build-mod`.
+- Optional mod tests: `python scripts\setup.py test-mod` builds the mod and runs the C# tests
+  in `tests\` (the JSON reader and writer, the bridge socket, and `protocol\examples.ndjson`
+  read the way the mod reads it). They need no game install, and CI runs them on every pull
+  request that touches the mod. Close RimWorld first, as with `build-mod`.
 - Notes for AI coding agents: [CLAUDE.md](CLAUDE.md).
 
 ## License

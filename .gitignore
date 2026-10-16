@@ -6,6 +6,8 @@ rimworld-mod/1.6/Assemblies/*
 !rimworld-mod/1.6/Assemblies/.gitkeep
 rimworld-mod/Source/obj/
 rimworld-mod/Source/bin/
+tests/*/bin/
+tests/*/obj/
 bridge/target/
 
 # Never commit game files or decompiled game code
