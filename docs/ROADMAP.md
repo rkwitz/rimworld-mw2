@@ -337,6 +337,17 @@ with some animation when they attack in melee, and raiders always.
 - [x] Melee attacks swing the weapon from raised to struck and lunge the attacker at its
       target, bare-handed too, as RimWorld jolts it (0041 + mod)
 
+## M24: Combat Extended ammo for the MW2 player
+Under Combat Extended, the MW2 player's shots use the colonist's ammo, and MW2's clip and
+reload are CE's.
+
+- [x] Each `player_shot` uses the gun's CE ammo as CE's own shot does (`ammoConsumedPerShot`
+      included); with none loaded or carried it does nothing in RimWorld (mod)
+- [x] A magazine a shot empties is refilled from the inventory at once, without CE's reload
+      job, and CE gives the played colonist no reload jobs (mod)
+- [x] `player_gun` reports `mag`, `loaded`, `reload` and `spare`; MW2's clip is the
+      magazine, its reload as long as CE's, and a dry gun is empty (0042 + mod)
+
 ## Balance notes
 MW2 fire rates are far above RimWorld bursts. v0 scales per-bullet damage by
 RimWorld DPS / MW2 DPS with one tunable multiplier. Weapon map starts as: assault rifle → ACR,

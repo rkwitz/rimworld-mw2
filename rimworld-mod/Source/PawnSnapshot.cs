@@ -56,8 +56,8 @@ namespace RimWorldMW2
 
         /// <summary>
         /// M15: how the colonist's gun fires in RimWorld, so MW2 fires it the same way: shots a
-        /// burst, seconds between them, the colonist's aiming time and the gun's cooldown; null
-        /// without a ranged gun.
+        /// burst, seconds between them, the colonist's aiming time and the gun's cooldown (M24:
+        /// and its Combat Extended magazine and ammo); null without a ranged gun.
         /// </summary>
         private static string GunTiming(Pawn pawn)
         {
@@ -74,6 +74,8 @@ namespace RimWorldMW2
                 .Num("cooldown", cooldown);
             // M20: grenades are thrown, this far.
             if (Throws.Thrown(verb, gun)) json.Num("throw", props.range);
+            // M24: under Combat Extended, the gun's magazine and ammo.
+            else CombatExtendedCompat.AmmoReport(pawn, gun, verb, json);
             return json.ToString();
         }
 

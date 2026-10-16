@@ -1,0 +1,180 @@
+diff --git a/crates/rimworld_world/src/lib.rs b/crates/rimworld_world/src/lib.rs
+index f73190e..6c7e1f8 100644
+--- a/crates/rimworld_world/src/lib.rs
++++ b/crates/rimworld_world/src/lib.rs
+@@ -544,9 +544,11 @@ pub struct FlatFloor {
+     /// last reported.
+     since_arm: f32,
+     /// The rounds in the held gun's clip last frame, and how many game seconds more it holds
+-    /// fire, as RimWorld spaces its shots and bursts (M15).
++    /// fire, as RimWorld spaces its shots and bursts (M15); and the shots of the burst it is
++    /// firing, for a Combat Extended magazine that holds more than a burst (M24).
+     gun_clip: Option<i32>,
+     gun_hold: f32,
++    gun_shots: i32,
+     armed_with: Option<Option<String>>,
+     /// The figures as bullets see them, by `sim::voxel` mob key (the index): pawn id, whether
+     /// it has a head to hit, and its block-space box.
+@@ -1172,7 +1174,8 @@ fn update(
+     // The minimap shows RimWorld, else the floor; never the stand-in map.
+     if let Some(ui) = ui.as_deref_mut() {
+         // The colonist's clip, a RimWorld burst, for the HUD's ammo (M16).
+-        ui.clip_rounds = floor.gun_clip.and(link.as_deref().and_then(|link| link.player_gun)).map(|gun| gun.burst.clamp(1, 1000) as i32);
++        // M24: under Combat Extended, the gun's magazine.
++        ui.clip_rounds = floor.gun_clip.and(link.as_deref().and_then(|link| link.player_gun)).map(|gun| clip_size(&gun));
+         // RimWorld's own window over the minimap's corner (M16): MW2 draws none there.
+         ui.minimap_hidden = link.as_deref().is_some_and(|link| link.overlay);
+         if let Some(picture) = floor.view.clone() {
+@@ -1486,33 +1489,66 @@ fn arm_player(floor: &mut FlatFloor, authority: &mut net::AuthorityWorld, local:
+     want
+ }
+ 
++/// The clip of the player's gun: a RimWorld burst (M16), or under Combat Extended the gun's
++/// magazine (M24).
++fn clip_size(gun: &rimworld_bridge::GunTiming) -> i32 {
++    gun.mag.filter(|&mag| mag > 0).map_or(gun.burst, |mag| mag).clamp(1, 1000) as i32
++}
++
+ /// Fires the player's gun as RimWorld fires their colonist's (M15): its clip holds one
+ /// burst, its shots `between` apart, and once the burst is spent MW2 reloads, taking as long
+ /// as RimWorld's cooldown and aiming time (M16), at the game's speed `rate`. Its reserve
+-/// never runs out. `None` (no gun, or not playing) leaves MW2's own guns as they were.
++/// never runs out. Under Combat Extended (M24) the clip is the gun's magazine, never holding
++/// more than RimWorld has loaded: MW2 holds fire for the cooldown and aiming time after each
++/// burst, and reloads only once the clip is empty, taking as long as CE's reload and the
++/// aiming time. A gun with no CE ammo left, loaded or carried, has an empty clip and reserve.
++/// `None` (no gun, or not playing) leaves MW2's own guns as they were.
+ fn fire_like_rimworld(floor: &mut FlatFloor, authority: &mut net::AuthorityWorld, local: sim::ClientId, gun: Option<rimworld_bridge::GunTiming>, rate: f32, dt: f32) {
+     let Some(gun) = gun else {
+         if floor.gun_clip.take().is_some() {
+             sim::voxel::set_magazine(None);
+         }
+         floor.gun_hold = 0.0;
++        floor.gun_shots = 0;
+         return;
+     };
+-    let rounds = gun.burst.clamp(1, 1000) as i32;
++    let fed = gun.mag.is_some_and(|mag| mag > 0);
++    let dry = gun.dry();
++    let rounds = match gun.loaded {
++        _ if dry => 0,
++        // RimWorld fills its magazine as soon as a shot empties it, so it is only seen empty
++        // when it can't be: then the whole magazine, not to cut MW2's reload short.
++        Some(loaded) if fed && loaded > 0 => clip_size(&gun).min(loaded as i32),
++        _ => clip_size(&gun),
++    };
++    let burst = gun.burst.clamp(1, 1000) as i32;
+     floor.gun_hold = (floor.gun_hold - dt * rate.max(0.1)).max(0.0);
+     let clip = authority.0.held_clip(local);
+-    // A round fired: not the clip cut to a burst when the gun is handed over.
+-    if let (Some(before), Some(now)) = (floor.gun_clip, clip)
+-        && now < before
+-        && before <= rounds
+-    {
+-        // The last of the burst: the reload that follows is RimWorld's wait.
+-        floor.gun_hold = if now == 0 { 0.0 } else { gun.between };
++    if let (Some(before), Some(now)) = (floor.gun_clip, clip) {
++        // A round fired: not the clip cut to a burst when the gun is handed over, nor cut to
++        // what RimWorld has loaded.
++        if now < before && before <= rounds {
++            floor.gun_shots += 1;
++            floor.gun_hold = if now == 0 {
++                // The last of the clip: the reload that follows is RimWorld's wait.
++                0.0
++            } else if fed && floor.gun_shots >= burst {
++                gun.cooldown + gun.warmup
++            } else {
++                gun.between
++            };
++        }
++        if now == 0 || now > before || floor.gun_shots >= burst {
++            floor.gun_shots = 0;
++        }
+     }
+     floor.gun_clip = Some(clip.unwrap_or(0));
+-    let reload = (gun.cooldown + gun.warmup) / rate.max(0.1);
++    let reload = match gun.reload {
++        Some(reload) if fed => reload + gun.warmup,
++        _ => gun.cooldown + gun.warmup,
++    } / rate.max(0.1);
+     let reload_ms = (reload * 1000.0).round().clamp(100.0, 30_000.0) as i32;
+-    sim::voxel::set_magazine(Some(sim::voxel::Magazine { client: local.0, rounds, hold: floor.gun_hold > 0.0, reload_ms }));
++    sim::voxel::set_magazine(Some(sim::voxel::Magazine { client: local.0, rounds, hold: floor.gun_hold > 0.0, reload_ms, fed, dry }));
+ }
+ 
+ /// Each figure as bullets see it: pawn id, what parts a bullet can strike, and a
+@@ -1786,6 +1822,7 @@ fn stop(floor: &mut FlatFloor, view: &mut MinecraftWorldView, ui: Option<&mut fr
+     sim::voxel::set_magazine(None);
+     floor.gun_clip = None;
+     floor.gun_hold = 0.0;
++    floor.gun_shots = 0;
+     view.entity_meshes = Default::default();
+     if let Some(ui) = ui {
+         ui.minimap = None;
+diff --git a/crates/sim/src/item.rs b/crates/sim/src/item.rs
+index 96a9ce0..b64dee6 100644
+--- a/crates/sim/src/item.rs
++++ b/crates/sim/src/item.rs
+@@ -187,15 +187,18 @@ pub(crate) fn sustain_block_world_arsenal(world: &mut FrameWorld) {
+             let full_stock = facts.max_ammo.max(facts.start_ammo);
+             if let Some(magazine) = crate::voxel::magazine(id.0) {
+                 // A RimWorld colonist's gun: a burst to a clip, emptied by firing and filled
+-                // by reloading, from a reserve that never runs out.
+-                let rounds = magazine.rounds.clamp(1, facts.clip_size.max(1));
+-                if clip_r > rounds || clip_l > 0 || stock < full_stock {
+-                    set_ammo_on_ps(world, &mut ps, weapon, clip_r.min(rounds), 0, full_stock);
++                // by reloading, from a reserve that never runs out; under Combat Extended
++                // (M24) none at all once its ammo is gone.
++                let rounds = magazine.rounds.clamp(if magazine.dry { 0 } else { 1 }, facts.clip_size.max(1));
++                let reserve = if magazine.dry { 0 } else { full_stock };
++                let wrong = |stock: i32| stock < reserve || (magazine.dry && stock > 0);
++                if clip_r > rounds || clip_l > 0 || wrong(stock) {
++                    set_ammo_on_ps(world, &mut ps, weapon, clip_r.min(rounds), 0, reserve);
+                 }
+                 let meta = world.client_meta_mut(id);
+                 let (clip, stock) = meta.ammo_for(weapon);
+-                if clip > rounds || stock < full_stock {
+-                    meta.set_ammo(weapon, clip.min(rounds), full_stock);
++                if clip > rounds || wrong(stock) {
++                    meta.set_ammo(weapon, clip.min(rounds), reserve);
+                 }
+                 continue;
+             }
+diff --git a/crates/sim/src/script_player.rs b/crates/sim/src/script_player.rs
+index 4836ecd..33a26f2 100644
+--- a/crates/sim/src/script_player.rs
++++ b/crates/sim/src/script_player.rs
+@@ -801,8 +801,14 @@ pub(crate) fn constrain_cmd(
+         cmd.buttons &= !(buttons::ATTACK | buttons::THROW | buttons::ADS | buttons::MELEE_CHARGE);
+     }
+     // A RimWorld colonist's gun between its shots and bursts (M15).
+-    if crate::voxel::magazine(id.0).is_some_and(|magazine| magazine.hold) {
+-        cmd.buttons &= !buttons::ATTACK;
++    if let Some(magazine) = crate::voxel::magazine(id.0) {
++        if magazine.hold {
++            cmd.buttons &= !buttons::ATTACK;
++        }
++        // A Combat Extended magazine is reloaded once empty, when RimWorld refills it (M24).
++        if magazine.fed && held != 0 && ammo_clip(world, id, held) > 0 {
++            cmd.buttons &= !buttons::RELOAD;
++        }
+     }
+     if controls.offhands_disabled || controls.weapons_disabled {
+         cmd.buttons &= !(buttons::FRAG | buttons::SMOKE);
+diff --git a/crates/sim/src/voxel.rs b/crates/sim/src/voxel.rs
+index 5f3347f..bd9875c 100644
+--- a/crates/sim/src/voxel.rs
++++ b/crates/sim/src/voxel.rs
+@@ -190,6 +190,12 @@ pub struct Magazine {
+     /// How long a reload takes, in milliseconds (M16: as long as RimWorld's cooldown and
+     /// aiming); 0 for MW2's own.
+     pub reload_ms: i32,
++    /// M24: the clip is a Combat Extended magazine, holding more than a burst: the player
++    /// reloads only once it is empty, as RimWorld refills it.
++    pub fed: bool,
++    /// M24: no Combat Extended ammo left, loaded or carried: the clip and reserve are empty
++    /// (`rounds` is 0).
++    pub dry: bool,
+ }
+ 
+ static MAGAZINE: RwLock<Option<Magazine>> = RwLock::new(None);

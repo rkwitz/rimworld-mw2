@@ -309,4 +309,10 @@ a scratch copy that already has the earlier patches (`add -N` makes new files sh
   (mirrored to point left, down when towards the eye), turned by the weapon's own offset;
   `swings` going up plays a melee swing (raised to struck) and a lunge at the target.
 
+- `0042-rimworld-ce-ammo.patch` (M24): under Combat Extended, `player_gun`'s `mag` is the
+  player's clip (still capped at the MW2 gun's own clip), never holding more than RimWorld has
+  `loaded`; fire is held for the cooldown and aiming time after each burst, the reload key
+  does nothing until the clip is empty, and a reload takes CE's `reload` plus the aiming
+  time. A dry gun (nothing `loaded`, `spare` 0) has an empty clip and reserve.
+
 If the engine changes grow large, switch to a real fork and point `versions.json` at it.

@@ -6,6 +6,7 @@ using HarmonyLib;
 using RimWorld;
 using UnityEngine;
 using Verse;
+using Verse.AI;
 
 namespace RimWorldMW2
 {
@@ -22,6 +23,8 @@ namespace RimWorldMW2
     /// says (<see cref="DodgeableShots"/>)</item>
     /// <item>the MW2 player's look-alike bullets are CE's own and touch nothing, and their hits
     /// pierce armour as the loaded ammo does (<see cref="PlayerShots"/>)</item>
+    /// <item>the MW2 player's shots use the gun's CE ammo, and MW2's clip is CE's magazine
+    /// (<see cref="ReadyShot"/>, <see cref="AmmoReport"/>)</item>
     /// <item>grenades are thrown with CE's own throw (<see cref="Throws"/>)</item>
     /// <item>CE's explosions show in MW2 (<see cref="ExplosionReport"/>)</item>
     /// </list>
@@ -61,12 +64,39 @@ namespace RimWorldMW2
         private static MethodInfo verbProjectileOf;
         private static MethodInfo verbShotHeightOf;
 
+        // CompAmmoUser, the gun's magazine and the ammo it draws from the inventory.
+        private static Type ammoUserType;
+        private static MethodInfo useAmmoOf;
+        private static MethodInfo hasMagazineOf;
+        private static MethodInfo magSizeOf;
+        private static MethodInfo magCountOf;
+        private static MethodInfo spareOf;
+        private static MethodInfo ammoPropsOf;
+        private static MethodInfo tryPrepareShot;
+        private static MethodInfo notifyShotFired;
+        private static MethodInfo loadAmmo;
+        private static MethodInfo tryFindAmmo;
+        private static FieldInfo reloadTimeOf;
+        private static FieldInfo oneAtATimeOf;
+        private static FieldInfo ammoSetOf;
+        private static FieldInfo setPerShotOf;
+        private static FieldInfo verbPerShotOf;
+        private static FieldInfo equipmentStatsOf;
+        // CE's reload stats, found once the defs have loaded (after the mod's constructor patches).
+        private static StatDef reloadTimeStat;
+        private static StatDef reloadFactorStat;
+        private static StatDef reloadSpeedStat;
+        private static bool reloadStatsFound;
+
         private static readonly AccessTools.FieldRef<Verb, LocalTargetInfo> CurrentTargetOf =
             AccessTools.FieldRefAccess<Verb, LocalTargetInfo>("currentTarget");
         private static readonly MethodInfo TryCastShot = AccessTools.Method(typeof(Verb), "TryCastShot");
 
         /// <summary>Combat Extended is loaded and patched.</summary>
         public static bool Active { get; private set; }
+
+        /// <summary>The MW2 player's shots use CE's ammo (CE is active and its ammo was found).</summary>
+        public static bool AmmoActive { get; private set; }
 
         /// <summary>Patches CE's projectiles, explosions and verbs, if CE is loaded.</summary>
         internal static void Patch(Harmony harmony)
@@ -99,7 +129,49 @@ namespace RimWorldMW2
             catch (Exception e)
             {
                 Log.Error($"[RimWorldMW2] Combat Extended found, but patching it failed, so its shots won't show in MW2: {e}");
+                return;
             }
+            try
+            {
+                ResolveAmmo();
+                // CE reloads a drafted colonist's half-empty gun with a job, which would stop the
+                // colonist MW2 plays; MW2's player reloads when the magazine is empty instead.
+                harmony.Patch(Need(AccessTools.Method("CombatExtended.JobGiver_CheckReload:TryGiveJob"), "JobGiver_CheckReload.TryGiveJob"),
+                    prefix: new HarmonyMethod(typeof(CombatExtendedCompat), nameof(CheckReloadPrefix)));
+                AmmoActive = true;
+            }
+            catch (Exception e)
+            {
+                Log.Warning($"[RimWorldMW2] Combat Extended's ammo wasn't found, so the MW2 player's shots use none: {e}");
+            }
+        }
+
+        /// <summary>Finds CE's ammo by name; throws when something needed has gone.</summary>
+        private static void ResolveAmmo()
+        {
+            ammoUserType = Need(AccessTools.TypeByName("CombatExtended.CompAmmoUser"), "CompAmmoUser");
+            Type ammoPropsType = Need(AccessTools.TypeByName("CombatExtended.CompProperties_AmmoUser"), "CompProperties_AmmoUser");
+            Type ammoSetType = Need(AccessTools.TypeByName("CombatExtended.AmmoSetDef"), "AmmoSetDef");
+            Type verbPropsType = Need(AccessTools.TypeByName("CombatExtended.VerbPropertiesCE"), "VerbPropertiesCE");
+            MethodInfo Getter(string name) => Need(AccessTools.PropertyGetter(ammoUserType, name), "CompAmmoUser." + name);
+            FieldInfo Field(Type type, string name) => Need(AccessTools.Field(type, name), type.Name + "." + name);
+            useAmmoOf = Getter("UseAmmo");
+            hasMagazineOf = Getter("HasMagazine");
+            magSizeOf = Getter("MagSize");
+            magCountOf = Getter("CurMagCount");
+            spareOf = AccessTools.PropertyGetter(ammoUserType, "MagsLeftReadOnly"); // newer CE only
+            ammoPropsOf = Getter("Props");
+            tryPrepareShot = Need(AccessTools.Method(ammoUserType, "TryPrepareShot", Type.EmptyTypes), "CompAmmoUser.TryPrepareShot");
+            notifyShotFired = Need(AccessTools.Method(ammoUserType, "Notify_ShotFired", new[] { typeof(int) }), "CompAmmoUser.Notify_ShotFired");
+            loadAmmo = Need(AccessTools.Method(ammoUserType, "LoadAmmo", new[] { typeof(Thing), typeof(bool) }), "CompAmmoUser.LoadAmmo");
+            tryFindAmmo = Need(AccessTools.Method(ammoUserType, "TryFindAmmoInInventory", new[] { typeof(Thing).MakeByRefType() }),
+                "CompAmmoUser.TryFindAmmoInInventory");
+            reloadTimeOf = Field(ammoPropsType, "reloadTime");
+            oneAtATimeOf = Field(ammoPropsType, "reloadOneAtATime");
+            ammoSetOf = Field(ammoPropsType, "ammoSet");
+            setPerShotOf = Field(ammoSetType, "ammoConsumedPerShot");
+            verbPerShotOf = Field(verbPropsType, "ammoConsumedPerShotCount");
+            equipmentStatsOf = AccessTools.Field(verbPropsType, "useEquipmentStatValues");
         }
 
         /// <summary>Finds CE's types and members by name; throws when one has gone.</summary>
@@ -194,6 +266,147 @@ namespace RimWorldMW2
             }
         }
 
+        // ---------------------------------------------------------------- ammo
+
+        /// <summary>The CE ammo (<c>CompAmmoUser</c>) of <paramref name="gun"/> when it takes
+        /// any: a magazine, or ammo from the inventory while CE's ammo system is on. Else null.</summary>
+        private static ThingComp AmmoUser(Thing gun)
+        {
+            if (!AmmoActive || !(gun is ThingWithComps withComps)) return null;
+            ThingComp ammo = withComps.AllComps.FirstOrDefault(comp => ammoUserType.IsInstanceOfType(comp));
+            if (ammo == null) return null;
+            return Is(useAmmoOf, ammo) || Is(hasMagazineOf, ammo) ? ammo : null;
+        }
+
+        private static bool Is(MethodInfo getter, object ammo) => (bool)getter.Invoke(ammo, null);
+
+        private static int Count(MethodInfo getter, object ammo) => (int)getter.Invoke(ammo, null);
+
+        /// <summary>Readies a shot of the MW2 player's <paramref name="gun"/> as CE would, from
+        /// its magazine or, for a gun without one, by taking a round from the inventory. False
+        /// when there is nothing to fire: the shot then does nothing in RimWorld. Always true for
+        /// a gun CE doesn't feed.</summary>
+        internal static bool ReadyShot(Thing gun)
+        {
+            ThingComp ammo = AmmoUser(gun);
+            if (ammo == null) return true;
+            try
+            {
+                // Empty since MW2 last reloaded (say CE emptied it while RimWorld played the
+                // colonist): MW2 has already waited its reload.
+                if (Is(hasMagazineOf, ammo) && Count(magCountOf, ammo) <= 0) Refill(ammo);
+                return (bool)tryPrepareShot.Invoke(ammo, null);
+            }
+            catch (Exception e)
+            {
+                Log.ErrorOnce($"[RimWorldMW2] Combat Extended ammo check failed: {e}", 0x3C4E0004);
+                return true;
+            }
+        }
+
+        /// <summary>Uses up the ammo of a shot <see cref="ReadyShot"/> readied, as many rounds as
+        /// CE's own shot from <paramref name="verb"/> takes. A magazine it empties is refilled
+        /// at once, so it is full again while MW2 reloads.</summary>
+        internal static void ShotFired(Thing gun, Verb verb)
+        {
+            ThingComp ammo = AmmoUser(gun);
+            if (ammo == null) return;
+            try
+            {
+                notifyShotFired.Invoke(ammo, new object[] { PerShot(ammo, verb) });
+                if (Is(hasMagazineOf, ammo) && Count(magCountOf, ammo) <= 0) Refill(ammo);
+            }
+            catch (Exception e)
+            {
+                Log.ErrorOnce($"[RimWorldMW2] Combat Extended ammo use failed: {e}", 0x3C4E0005);
+            }
+        }
+
+        /// <summary>Rounds a shot takes, as CE's <c>Verb_ShootCE</c> counts them.</summary>
+        private static int PerShot(ThingComp ammo, Verb verb)
+        {
+            object set = ammoSetOf.GetValue(ammoPropsOf.Invoke(ammo, null));
+            int perShot = set != null ? (int)setPerShotOf.GetValue(set) : 1;
+            if (verb?.verbProps != null && verbPerShotOf.DeclaringType.IsInstanceOfType(verb.verbProps))
+                perShot *= (int)verbPerShotOf.GetValue(verb.verbProps);
+            return Mathf.Max(1, perShot);
+        }
+
+        /// <summary>Fills the empty magazine from the inventory, as far as the ammo carried
+        /// goes, without CE's reload job: that job (<c>TryStartReload</c>) takes the colonist
+        /// over and would fight MW2 for it. Never called with no ammo to load, as CE's
+        /// <c>LoadAmmo</c> would then send the colonist off to find some or change weapons.</summary>
+        private static void Refill(ThingComp ammo)
+        {
+            bool useAmmo = Is(useAmmoOf, ammo);
+            int size = Count(magSizeOf, ammo);
+            // Shotguns and bolt actions load a round at a time, the rest a magazine at once.
+            int loads = (bool)oneAtATimeOf.GetValue(ammoPropsOf.Invoke(ammo, null)) ? size : 1;
+            for (int i = 0; i < loads && Count(magCountOf, ammo) < size; i++)
+            {
+                if (useAmmo)
+                {
+                    var found = new object[] { null };
+                    if (!(bool)tryFindAmmo.Invoke(ammo, found)) return;
+                }
+                int before = Count(magCountOf, ammo);
+                loadAmmo.Invoke(ammo, new object[] { null, false });
+                if (Count(magCountOf, ammo) <= before) return;
+            }
+        }
+
+        /// <summary>
+        /// For <c>player_gun</c>, CE's ammo for <paramref name="pawn"/>'s <paramref name="gun"/>:
+        /// <c>mag</c> and <c>loaded</c>, its magazine's size and the rounds in it, and
+        /// <c>reload</c>, CE's seconds to fill it from empty, for a gun with a magazine;
+        /// <c>spare</c>, the ammo carried for it, while CE's ammo system is on. Nothing for a gun
+        /// CE doesn't feed.
+        /// </summary>
+        internal static void AmmoReport(Pawn pawn, Thing gun, Verb verb, Json json)
+        {
+            ThingComp ammo = AmmoUser(gun);
+            if (ammo == null) return;
+            try
+            {
+                if (Is(hasMagazineOf, ammo))
+                {
+                    int size = Count(magSizeOf, ammo);
+                    json.Num("mag", (long)size)
+                        .Num("loaded", (long)Mathf.Clamp(Count(magCountOf, ammo), 0, size))
+                        .Num("reload", ReloadSeconds(pawn, gun, verb, ammo, size));
+                }
+                if (Is(useAmmoOf, ammo) && spareOf != null) json.Num("spare", (long)Count(spareOf, ammo));
+            }
+            catch (Exception e)
+            {
+                Log.ErrorOnce($"[RimWorldMW2] couldn't report Combat Extended ammo: {e}", 0x3C4E0006);
+            }
+        }
+
+        /// <summary>How long CE's reload job takes to fill the empty magazine of
+        /// <paramref name="size"/> rounds, in seconds of game time (<c>JobDriver_Reload</c>'s
+        /// wait, for each round of a gun that loads one at a time).</summary>
+        private static float ReloadSeconds(Pawn pawn, Thing gun, Verb verb, ThingComp ammo, int size)
+        {
+            if (!reloadStatsFound)
+            {
+                reloadTimeStat = DefDatabase<StatDef>.GetNamedSilentFail("ReloadTime");
+                reloadFactorStat = DefDatabase<StatDef>.GetNamedSilentFail("CE_RangedWeapon_ReloadFactor");
+                reloadSpeedStat = DefDatabase<StatDef>.GetNamedSilentFail("ReloadSpeed");
+                reloadStatsFound = true;
+            }
+            object props = ammoPropsOf.Invoke(ammo, null);
+            float seconds = (float)reloadTimeOf.GetValue(props);
+            object verbProps = verb?.verbProps;
+            if (reloadTimeStat != null && equipmentStatsOf != null && equipmentStatsOf.DeclaringType.IsInstanceOfType(verbProps)
+                && (bool)equipmentStatsOf.GetValue(verbProps))
+                seconds = gun.GetStatValue(reloadTimeStat);
+            if (reloadFactorStat != null) seconds *= gun.GetStatValue(reloadFactorStat);
+            if (reloadSpeedStat != null) seconds /= Mathf.Max(0.001f, pawn.GetStatValue(reloadSpeedStat));
+            if ((bool)oneAtATimeOf.GetValue(props)) seconds *= Mathf.Max(1, size);
+            return seconds;
+        }
+
         // ---------------------------------------------------------------- look-alikes
 
         /// <summary>Launches a CE look-alike bullet (<see cref="PlayerShots"/>) from
@@ -248,6 +461,14 @@ namespace RimWorldMW2
             if (!PlayerShots.IsLookAlike(__instance)) return true;
             PlayerShots.Forget(__instance);
             if (!__instance.Destroyed) __instance.Destroy();
+            return false;
+        }
+
+        /// <summary>No reload job for the colonist MW2 plays (<see cref="Refill"/> reloads it).</summary>
+        private static bool CheckReloadPrefix(Pawn pawn, ref Job __result)
+        {
+            if (!PlayerPawn.Controls(pawn)) return true;
+            __result = null;
             return false;
         }
 

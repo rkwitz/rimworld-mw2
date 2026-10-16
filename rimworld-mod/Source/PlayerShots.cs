@@ -37,9 +37,12 @@ namespace RimWorldMW2
             if (shooter == null || shooter.ThingID != id) return;
             Thing gun = shooter.equipment?.Primary;
             VerbProperties verb = gun?.def?.Verbs?.FirstOrDefault();
-            // Combat Extended fires the loaded ammo's bullet, not the gun's default one.
+            // Combat Extended fires the loaded ammo's bullet, not the gun's default one, and
+            // uses that ammo up: with none loaded or carried, the shot does nothing.
             Verb shooting = shooter.equipment?.PrimaryEq?.PrimaryVerb;
+            if (!CombatExtendedCompat.ReadyShot(gun)) return;
             ThingDef ceBullet = CombatExtendedCompat.Projectile(shooting);
+            CombatExtendedCompat.ShotFired(gun, shooting);
             ShowBullet(shooter, gun, shooting, ceBullet ?? verb?.defaultProjectile, from, to, map);
             if (target == null || damage <= 0f) return;
             Pawn victim = map.mapPawns.AllPawnsSpawned.FirstOrDefault(p => p.ThingID == target);
