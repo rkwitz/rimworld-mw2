@@ -14,7 +14,9 @@ namespace RimWorldMW2
         public BridgeMod(ModContentPack content) : base(content)
         {
             Settings = GetSettings<BridgeSettings>();
-            new Harmony(HarmonyId).PatchAll();
+            var harmony = new Harmony(HarmonyId);
+            harmony.PatchAll();
+            CombatExtendedCompat.Patch(harmony);
             Application.quitting += BridgeGameComponent.Shutdown;
             RimView.RepairPrefs();
             Log.Message($"[RimWorldMW2] loaded, bridge target {Settings.Host}:{Settings.Port}");

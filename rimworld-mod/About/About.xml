@@ -16,6 +16,7 @@
   </modDependencies>
   <loadAfter>
     <li>brrainz.harmony</li>
+    <li>CETeam.CombatExtended</li>
   </loadAfter>
   <description>Streams RimWorld raids to a first-person MW2 view running on IW4L. Development build: needs the companion IW4L side from the project repo.</description>
 </ModMetaData>
