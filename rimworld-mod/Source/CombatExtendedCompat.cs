@@ -37,6 +37,7 @@ namespace RimWorldMW2
         private static Type explosiveType;
         private static Type launchVerbType;
         private static Type throwVerbType;
+        private static Type propsType;
 
         private static AccessTools.FieldRef<object, Vector2> originOf;
         private static AccessTools.FieldRef<object, Vector2> destinationOf;
@@ -108,7 +109,7 @@ namespace RimWorldMW2
             explosiveType = Need(AccessTools.TypeByName("CombatExtended.ProjectileCE_Explosive"), "ProjectileCE_Explosive");
             launchVerbType = Need(AccessTools.TypeByName("CombatExtended.Verb_LaunchProjectileCE"), "Verb_LaunchProjectileCE");
             throwVerbType = Need(AccessTools.TypeByName("CombatExtended.Verb_ThrowGrenade"), "Verb_ThrowGrenade");
-            Type propsType = Need(AccessTools.TypeByName("CombatExtended.ProjectilePropertiesCE"), "ProjectilePropertiesCE");
+            propsType = Need(AccessTools.TypeByName("CombatExtended.ProjectilePropertiesCE"), "ProjectilePropertiesCE");
             Type workerType = Need(AccessTools.TypeByName("CombatExtended.BaseTrajectoryWorker"), "BaseTrajectoryWorker");
             Type explosionType = Need(AccessTools.TypeByName("CombatExtended.ExplosionCE"), "ExplosionCE");
 
@@ -165,11 +166,15 @@ namespace RimWorldMW2
         }
 
         /// <summary>The armour penetration of a bullet <paramref name="projectile"/> from
-        /// <paramref name="gun"/>, as CE measures it (against sharp armour, which bullets meet).</summary>
-        internal static float SharpPenetration(ThingDef projectile, Thing gun)
+        /// <paramref name="gun"/>, as CE measures it (against sharp armour, which bullets meet).
+        /// False for a projectile CE hasn't given its own properties.</summary>
+        internal static bool SharpPenetration(ThingDef projectile, Thing gun, out float penetration)
         {
+            penetration = 0f;
+            if (!Active || !propsType.IsInstanceOfType(projectile?.projectile)) return false;
             float multiplier = gun?.GetStatValue(StatDefOf.RangedWeapon_ArmorPenetrationMultiplier) ?? 1f;
-            return sharpPenetrationOf(projectile.projectile) * multiplier;
+            penetration = sharpPenetrationOf(projectile.projectile) * multiplier;
+            return true;
         }
 
         /// <summary>The played colonist throws CE's grenade (or other thrown weapon) at
@@ -195,6 +200,8 @@ namespace RimWorldMW2
         /// <paramref name="from"/> to land on <paramref name="land"/>. False if it couldn't.</summary>
         internal static bool LaunchLookAlike(Thing bullet, Pawn shooter, Thing gun, Verb verb, Vector3 from, IntVec3 land)
         {
+            if (!Active || !projectileType.IsInstanceOfType(bullet) || !propsType.IsInstanceOfType(bullet.def.projectile))
+                return false;
             try
             {
                 object props = bullet.def.projectile;

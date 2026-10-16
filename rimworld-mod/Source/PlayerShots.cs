@@ -46,11 +46,11 @@ namespace RimWorldMW2
             if (victim == null || victim.Dead) return;
             float armorPenetration = verb?.defaultProjectile?.projectile?.GetArmorPenetration(gun) ?? 0.15f;
             ThingDef weapon = gun?.def;
-            if (ceBullet != null)
+            // CE measures armour and penetration on its own scale, and names the bullet as the
+            // weapon so a deflected round can turn blunt (as BulletCE does).
+            if (CombatExtendedCompat.SharpPenetration(ceBullet, gun, out float cePenetration))
             {
-                // CE measures armour and penetration on its own scale, and names the bullet as
-                // the weapon so a deflected round can turn blunt (as BulletCE does).
-                armorPenetration = CombatExtendedCompat.SharpPenetration(ceBullet, gun);
+                armorPenetration = cePenetration;
                 weapon = ceBullet;
             }
             BodyPartRecord struck = Part(victim, part);
