@@ -28,6 +28,24 @@ namespace RimWorldMW2
         public static readonly List<string> Names = new List<string>();
         /// <summary>Counts new names, so the list is sent again when it grows.</summary>
         public static int Revision;
+        /// <summary>M25: how many pictures IW4L's atlas holds (<c>SMALL_TILES</c> in the
+        /// engine); a picture past it is never shown.</summary>
+        public const int Capacity = 1536;
+        /// <summary>Room kept for the pictures a frame can add before the list starts over.</summary>
+        private const int Headroom = 160;
+
+        /// <summary>M25: the list is close to what IW4L holds.</summary>
+        public static bool NearlyFull => Names.Count >= Capacity - Headroom;
+
+        /// <summary>M25: forgets every picture, so each is numbered again as it is next used
+        /// and the list is sent again from the first. IW4L makes its atlas again when the list
+        /// does not go on from the last one. The files stay and are saved over.</summary>
+        public static void StartOver()
+        {
+            byKey.Clear();
+            Names.Clear();
+            Revision++;
+        }
         private static string dir;
 
         public static string Dir

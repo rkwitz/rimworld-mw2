@@ -1,0 +1,50 @@
+diff --git a/crates/rimworld_world/src/lib.rs b/crates/rimworld_world/src/lib.rs
+index f73190e..d94cb65 100644
+--- a/crates/rimworld_world/src/lib.rs
++++ b/crates/rimworld_world/src/lib.rs
+@@ -1984,6 +1984,14 @@ fn refresh_atlas(floor: &mut FlatFloor, link: Option<&RimworldLink>) -> bool {
+         }
+         _ => None,
+     };
++    // M25: RimWorld started its pictures over (the atlas was nearly full): the numbers
++    // people were shown by now name other pictures, so nobody keeps theirs until RimWorld
++    // sends them again.
++    if before.is_none() && floor.textures.is_some() {
++        for figure in floor.figures.values_mut() {
++            (figure.art, figure.was) = (None, None);
++        }
++    }
+     let (atlas, cutouts) = atlas_after(before, textures.as_deref());
+     floor.atlas = Some(Arc::new(atlas));
+     floor.cutouts = Arc::new(cutouts);
+@@ -5421,6 +5429,30 @@ mod tests {
+         }
+     }
+ 
++    /// M25: RimWorld starts its pictures over when the atlas is nearly full. People keep
++    /// their pictures while the list grows, but not past a list that starts again, where
++    /// their numbers name other pictures.
++    #[test]
++    fn people_lose_their_pictures_when_rimworld_starts_its_art_over() {
++        let textures = |names: &[&str]| {
++            Some(Arc::new(Textures { dir: "nowhere".into(), names: names.iter().map(|s| s.to_string()).collect() }))
++        };
++        let link = |names: &[&str]| RimworldLink { textures: textures(names), ..Default::default() };
++        let mut floor = FlatFloor::default();
++        assert!(refresh_atlas(&mut floor, Some(&link(&["a_cut", "b_cut"]))));
++        let mut pawn = pawn("Human1", 10.5, 10.5);
++        pawn.art = Some([0, 1, 0]);
++        pawn.draw = Some([2.0, 2.0]);
++        follow_pawns(&mut floor.figures, std::slice::from_ref(&pawn), 100, 0.1);
++        assert!(refresh_atlas(&mut floor, Some(&link(&["a_cut", "b_cut", "c_cut"]))));
++        assert_eq!(floor.figures["Human1"].art, Some([0, 1, 0]), "a growing list keeps them");
++        assert!(refresh_atlas(&mut floor, Some(&link(&["c_cut"]))));
++        assert_eq!((floor.figures["Human1"].art, floor.figures["Human1"].was), (None, None), "a new list drops them");
++        pawn.art = Some([0, 0, 0]);
++        follow_pawns(&mut floor.figures, std::slice::from_ref(&pawn), 100, 0.1);
++        assert_eq!(floor.figures["Human1"].art, Some([0, 0, 0]), "until RimWorld sends them again");
++    }
++
+     #[test]
+     fn new_pictures_go_into_the_atlas_as_if_it_were_made_again() {
+         let dir = std::env::temp_dir().join(format!("rwmw2-atlas-{}", std::process::id()));

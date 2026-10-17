@@ -32,6 +32,8 @@ namespace RimWorldMW2
         private static BridgeClient client;
         private bool helloSent;
         private float lastSnapshot = -1f;
+        private float artRestarted = -1000f;
+        private const float ArtRestartSeconds = 60f;
 
         public BridgeGameComponent(Game game) { }
 
@@ -57,16 +59,7 @@ namespace RimWorldMW2
             client?.Dispose();
             client = new BridgeClient(BridgeMod.Settings.Host, BridgeMod.Settings.Port);
             helloSent = false;
-            TerrainReport.Reset();
-            WorldReport.Reset();
-            LootReport.Reset();
-            LookReport.Reset();
-            FloraReport.Reset();
-            PawnArt.Reset();
-            DoorReport.Reset();
-            EffectsReport.Reset();
-            WeatherReport.Reset();
-            FleckReport.Reset();
+            ResetReports();
             HeldReport.Reset();
             ShotReport.Send = line =>
             {
@@ -93,16 +86,7 @@ namespace RimWorldMW2
             if (!client.Connected)
             {
                 helloSent = false;
-                TerrainReport.Reset();
-                WorldReport.Reset();
-                LootReport.Reset();
-                LookReport.Reset();
-                FloraReport.Reset();
-                PawnArt.Reset();
-                DoorReport.Reset();
-                EffectsReport.Reset();
-                WeatherReport.Reset();
-                FleckReport.Reset();
+                ResetReports();
                 RimView.Drop();
                 return;
             }
@@ -116,6 +100,7 @@ namespace RimWorldMW2
             }
             while (client.Inbound.TryDequeue(out var line))
                 Handle(line);
+            StartArtOverWhenFull();
             foreach (string line in TerrainReport.Poll())
                 client.Send(line);
             foreach (string line in WorldReport.Poll())
@@ -142,6 +127,38 @@ namespace RimWorldMW2
             lastSnapshot = now;
             string snapshot = PawnSnapshot.Build();
             if (snapshot != null) SendAfterArt(snapshot);
+        }
+
+        /// <summary>Everything sent so far forgotten, so it is all sent again.</summary>
+        private static void ResetReports()
+        {
+            TerrainReport.Reset();
+            WorldReport.Reset();
+            LootReport.Reset();
+            LookReport.Reset();
+            FloraReport.Reset();
+            PawnArt.Reset();
+            DoorReport.Reset();
+            EffectsReport.Reset();
+            WeatherReport.Reset();
+            FleckReport.Reset();
+        }
+
+        /// <summary>
+        /// M25: IW4L's atlas holds <see cref="TextureExport.Capacity"/> pictures, and the list
+        /// only grew, so in a long game the newest people (an army arriving late) had no room
+        /// and were never shown. Near full, the list starts over with only the art in use now,
+        /// all of it sent again. Not more often than <see cref="ArtRestartSeconds"/>, so a map
+        /// that needs more than the atlas holds cannot keep starting over.
+        /// </summary>
+        private void StartArtOverWhenFull()
+        {
+            float now = UnityEngine.Time.realtimeSinceStartup;
+            if (!TextureExport.NearlyFull || now - artRestarted < ArtRestartSeconds) return;
+            artRestarted = now;
+            Log.Message($"[RimWorldMW2] {TextureExport.Names.Count} pictures sent to MW2, near what it holds: starting over with the ones in use");
+            TextureExport.StartOver();
+            ResetReports();
         }
 
         /// <summary>Sends <paramref name="line"/>, after any art drawn for it (M13).</summary>

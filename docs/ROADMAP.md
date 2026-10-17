@@ -348,6 +348,16 @@ reload are CE's.
 - [x] `player_gun` reports `mag`, `loaded`, `reload` and `spare`; MW2's clip is the
       magazine, its reload as long as CE's, and a dry gun is empty (0042 + mod)
 
+## M25: room for every picture
+Ryan, 2026-10-17: a friendly army that came to the colony was invisible in MW2. RimWorld's
+pictures go to MW2 numbered in one list that only grew, and MW2's atlas holds 1536 of them;
+late in a long game the newest people (portraits are 3 pictures per look) had no room.
+
+- [x] Near full, the mod starts its list over with only the art in use now and sends
+      everything again; at most once a minute (mod)
+- [x] People drop their old pictures when the list starts over, instead of showing whatever
+      now has their numbers, until RimWorld sends theirs again (0043)
+
 ## Balance notes
 MW2 fire rates are far above RimWorld bursts. v0 scales per-bullet damage by
 RimWorld DPS / MW2 DPS with one tunable multiplier. Weapon map starts as: assault rifle → ACR,

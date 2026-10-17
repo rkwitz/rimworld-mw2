@@ -314,5 +314,8 @@ a scratch copy that already has the earlier patches (`add -N` makes new files sh
   `loaded`; fire is held for the cooldown and aiming time after each burst, the reload key
   does nothing until the clip is empty, and a reload takes CE's `reload` plus the aiming
   time. A dry gun (nothing `loaded`, `spare` 0) has an empty clip and reserve.
+- `0043-rimworld-art-starts-over.patch` (M25): when RimWorld's `textures` list starts over
+  (the atlas was nearly full), pawns drop the pictures they were shown by until RimWorld sends
+  theirs again. Independent of 0042 (pull request #3), which it applies with or without.
 
 If the engine changes grow large, switch to a real fork and point `versions.json` at it.
