@@ -360,7 +360,9 @@ namespace RimWorldMW2
         /// <c>mag</c> and <c>loaded</c>, its magazine's size and the rounds in it, and
         /// <c>reload</c>, CE's seconds to fill it from empty, for a gun with a magazine;
         /// <c>spare</c>, the ammo carried for it, while CE's ammo system is on. Nothing for a gun
-        /// CE doesn't feed.
+        /// CE doesn't feed. An empty magazine is filled first from any ammo carried, so what
+        /// MW2 reloads its clip with is loaded in RimWorld too, and stays there if the ammo
+        /// carried is then dropped.
         /// </summary>
         internal static void AmmoReport(Pawn pawn, Thing gun, Verb verb, Json json)
         {
@@ -370,6 +372,7 @@ namespace RimWorldMW2
             {
                 if (Is(hasMagazineOf, ammo))
                 {
+                    if (Count(magCountOf, ammo) <= 0) Refill(ammo);
                     int size = Count(magSizeOf, ammo);
                     json.Num("mag", (long)size)
                         .Num("loaded", (long)Mathf.Clamp(Count(magCountOf, ammo), 0, size))

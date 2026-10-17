@@ -345,6 +345,8 @@ reload are CE's.
       included); with none loaded or carried it does nothing in RimWorld (mod)
 - [x] A magazine a shot empties is refilled from the inventory at once, without CE's reload
       job, and CE gives the played colonist no reload jobs (mod)
+- [x] An empty magazine is also filled as soon as ammo is carried for it (picked up in
+      MW2, say), so dropping that ammo after MW2 reloads leaves the clip loaded (mod)
 - [x] `player_gun` reports `mag`, `loaded`, `reload` and `spare`; MW2's clip is the
       magazine, its reload as long as CE's, and a dry gun is empty (0042 + mod)
 
