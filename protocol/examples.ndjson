@@ -50,6 +50,8 @@
 {"t":"snapshot","tick":1400,"map":[250,250],"pawns":[],"player_pawn":"Human12","player_speed":4.6,"rate":1,"player_gun":{"burst":1,"between":0.0,"warmup":1.5,"cooldown":2.66,"throw":12.9}}
 {"t":"player_throw","pawn":"Human12","to":[28.5,33.5]}
 {"t":"snapshot","tick":1500,"map":[250,250],"pawns":[],"player_pawn":"Human12","player_speed":4.6,"rate":1,"player_gun":{"burst":3,"between":0.17,"warmup":1.0,"cooldown":1.7,"mag":30,"loaded":12,"reload":4.6,"spare":90}}
+{"t":"player_shot","pawn":"Human12","weapon":"spas12_mp","from":[30.1,1.6,30.3],"to":[38.5,1.0,31.2],"pellet":true}
+{"t":"player_reload","pawn":"Human12"}
 {"t":"fires","fires":[{"x":40.5,"z":41.5,"size":0.6},{"x":41.2,"z":41.0,"size":1.2}]}
 {"t":"gas","gas":[{"at":[40,40],"kind":"smoke","density":200},{"at":[42,40],"kind":"tox","density":60}]}
 {"t":"weather","rain":1.0,"snow":0.0,"fog":0.0,"wind":1.2}

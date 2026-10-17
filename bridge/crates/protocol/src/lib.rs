@@ -225,7 +225,8 @@ pub enum Message {
     /// `part` say which and where, and `damage` is MW2's damage for that hit, which RimWorld
     /// scales to its own. `part` (M18) is `head`, `neck`, `upper` (chest, shoulders, arms),
     /// `lower` (belly, hands) or `legs` on a standing person, `body` (anywhere) on anyone else.
-    /// RimWorld ignores it while paused.
+    /// RimWorld ignores it while paused. M24: a `pellet` is another pellet of the round before
+    /// it (a shotgun's), or a ricochet: it flies and strikes as the rest, but uses no ammo.
     PlayerShot {
         pawn: String,
         weapon: String,
@@ -237,7 +238,13 @@ pub enum Message {
         part: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         damage: Option<f32>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        pellet: bool,
     },
+    /// The MW2 player started reloading the gun of `pawn`, the colonist it plays (M24). Under
+    /// Combat Extended RimWorld reloads its magazine at once from the colonist's inventory,
+    /// while MW2 plays the reload out; otherwise nothing happens.
+    PlayerReload { pawn: String },
     /// RimWorld's bullet `shot` (the `id` of a [`Message::Shot`]) met the MW2 player, who
     /// plays `pawn` (M8+); `part` is `head` or `body`. RimWorld deals that bullet's own damage
     /// to the colonist, once per bullet.
@@ -654,8 +661,8 @@ pub struct GunTiming {
     /// burst. Absent for a gun without one (and without CE).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mag: Option<u32>,
-    /// M24: rounds in that magazine now. RimWorld uses a round for each `player_shot` and fills
-    /// the magazine again as soon as it is empty, so MW2's clip never holds more than this.
+    /// M24: rounds in that magazine now. RimWorld uses a round for each `player_shot` (not a
+    /// `pellet`) and fills the magazine on [`Message::PlayerReload`]: MW2's clip is this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loaded: Option<u32>,
     /// M24: seconds of game time Combat Extended takes to fill that magazine from empty:
@@ -663,8 +670,8 @@ pub struct GunTiming {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reload: Option<f32>,
     /// M24: under Combat Extended's ammo system, the ammo the colonist carries for the gun
-    /// outside its magazine. 0 with nothing `loaded` (or, for a gun without a magazine, at
-    /// all): the gun is dry, and `player_shot` does nothing.
+    /// outside its magazine: MW2's reserve. 0 with nothing `loaded` (or, for a gun without a
+    /// magazine, at all): the gun is dry, and `player_shot` does nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spare: Option<u32>,
 }
@@ -749,5 +756,26 @@ mod tests {
         let vanilla = player_gun(r#"{"t":"snapshot","tick":1,"pawns":[],"player_gun":{"burst":3,"between":0.17,"warmup":1.0,"cooldown":1.7}}"#);
         assert_eq!((vanilla.mag, vanilla.loaded, vanilla.reload, vanilla.spare), (None, None, None, None));
         assert!(!vanilla.dry());
+    }
+
+    /// M24: a pellet uses no ammo, and is only written when it is one.
+    #[test]
+    fn pellets_and_reloads() {
+        let shot = |pellet| Message::PlayerShot {
+            pawn: "Human12".into(),
+            weapon: "spas12_mp".into(),
+            from: [1.0, 1.6, 1.0],
+            to: [2.0, 1.0, 2.0],
+            target: None,
+            part: None,
+            damage: None,
+            pellet,
+        };
+        assert!(!shot(false).to_line().contains("pellet"));
+        assert!(shot(true).to_line().contains(r#""pellet":true"#));
+        let read = Message::from_line(r#"{"t":"player_shot","pawn":"Human12","weapon":"m4_mp","from":[1,1,1],"to":[2,1,2]}"#).unwrap();
+        assert!(matches!(read, Message::PlayerShot { pellet: false, .. }));
+        let reload = Message::from_line(r#"{"t":"player_reload","pawn":"Human12"}"#).unwrap();
+        assert_eq!(reload, Message::PlayerReload { pawn: "Human12".into() });
     }
 }

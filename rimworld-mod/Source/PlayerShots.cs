@@ -27,9 +27,15 @@ namespace RimWorldMW2
 
         internal static void Forget(Thing projectile) => lookAlikes.Remove(projectile);
 
+        /// <summary>The last round the MW2 player fired had ammo to fire: its other pellets
+        /// (<c>pellet</c>) fly too.</summary>
+        private static bool roundFired = true;
+
         /// <summary>A <c>player_shot</c>: <paramref name="from"/> and <paramref name="to"/> are
-        /// RimWorld <c>x</c> and <c>z</c>; <paramref name="part"/> is where it struck (<see cref="Part"/>).</summary>
-        public static void Fired(string id, Vector3 from, Vector3 to, string target, string part, float damage)
+        /// RimWorld <c>x</c> and <c>z</c>; <paramref name="part"/> is where it struck (<see cref="Part"/>).
+        /// A <paramref name="pellet"/> is another pellet or a ricochet of the round before it,
+        /// which used the ammo already (M24).</summary>
+        public static void Fired(string id, Vector3 from, Vector3 to, string target, string part, float damage, bool pellet = false)
         {
             if (Find.TickManager.Paused) return;
             Map map = PawnSnapshot.MapInView();
@@ -40,9 +46,13 @@ namespace RimWorldMW2
             // Combat Extended fires the loaded ammo's bullet, not the gun's default one, and
             // uses that ammo up: with none loaded or carried, the shot does nothing.
             Verb shooting = shooter.equipment?.PrimaryEq?.PrimaryVerb;
-            if (!CombatExtendedCompat.ReadyShot(gun)) return;
+            if (!pellet)
+            {
+                roundFired = CombatExtendedCompat.ReadyShot(gun);
+                if (roundFired) CombatExtendedCompat.ShotFired(gun, shooting);
+            }
+            if (!roundFired) return;
             ThingDef ceBullet = CombatExtendedCompat.Projectile(shooting);
-            CombatExtendedCompat.ShotFired(gun, shooting);
             ShowBullet(shooter, gun, shooting, ceBullet ?? verb?.defaultProjectile, from, to, map);
             if (target == null || damage <= 0f) return;
             Pawn victim = map.mapPawns.AllPawnsSpawned.FirstOrDefault(p => p.ThingID == target);
@@ -60,6 +70,15 @@ namespace RimWorldMW2
             var hit = new DamageInfo(DamageDefOf.Bullet, Mathf.Max(1f, damage * DamageScale), armorPenetration,
                 (victim.Position - shooter.Position).AngleFlat, shooter, struck, weapon, intendedTarget: victim);
             victim.TakeDamage(hit);
+        }
+
+        /// <summary>A <c>player_reload</c>: the MW2 player started reloading as <paramref name="id"/>,
+        /// whose Combat Extended magazine is reloaded now (M24).</summary>
+        public static void Reloaded(string id)
+        {
+            Pawn shooter = PlayerPawn.Current(PawnSnapshot.MapInView());
+            if (shooter == null || shooter.ThingID != id) return;
+            CombatExtendedCompat.Reload(shooter.equipment?.Primary);
         }
 
         /// <summary>Where on <paramref name="victim"/> MW2's bullet struck (M18), as RimWorld's

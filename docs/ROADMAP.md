@@ -343,12 +343,12 @@ reload are CE's.
 
 - [x] Each `player_shot` uses the gun's CE ammo as CE's own shot does (`ammoConsumedPerShot`
       included); with none loaded or carried it does nothing in RimWorld (mod)
-- [x] A magazine a shot empties is refilled from the inventory at once, without CE's reload
-      job, and CE gives the played colonist no reload jobs (mod)
-- [x] An empty magazine is also filled as soon as ammo is carried for it (picked up in
-      MW2, say), so dropping that ammo after MW2 reloads leaves the clip loaded (mod)
+- [x] MW2's reload reloads the magazine from the inventory, as it starts (`player_reload`),
+      without CE's reload job, and CE gives the played colonist no reload jobs (0044 + mod)
 - [x] `player_gun` reports `mag`, `loaded`, `reload` and `spare`; MW2's clip is the
       magazine, its reload as long as CE's, and a dry gun is empty (0042 + mod)
+- [x] MW2's clip and reserve are CE's `loaded` and `spare` exactly, a reload can start at
+      any time, and a shotgun's pellets use one round, not one each (0044 + mod)
 
 ## M25: room for every picture
 Ryan, 2026-10-17: a friendly army that came to the colony was invisible in MW2. RimWorld's

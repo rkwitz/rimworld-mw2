@@ -24,7 +24,7 @@ namespace RimWorldMW2
     /// <item>the MW2 player's look-alike bullets are CE's own and touch nothing, and their hits
     /// pierce armour as the loaded ammo does (<see cref="PlayerShots"/>)</item>
     /// <item>the MW2 player's shots use the gun's CE ammo, and MW2's clip is CE's magazine
-    /// (<see cref="ReadyShot"/>, <see cref="AmmoReport"/>)</item>
+    /// (<see cref="ReadyShot"/>, <see cref="AmmoReport"/>, <see cref="Reload"/>)</item>
     /// <item>grenades are thrown with CE's own throw (<see cref="Throws"/>)</item>
     /// <item>CE's explosions show in MW2 (<see cref="ExplosionReport"/>)</item>
     /// </list>
@@ -75,6 +75,7 @@ namespace RimWorldMW2
         private static MethodInfo tryPrepareShot;
         private static MethodInfo notifyShotFired;
         private static MethodInfo loadAmmo;
+        private static MethodInfo tryUnload;
         private static MethodInfo tryFindAmmo;
         private static FieldInfo reloadTimeOf;
         private static FieldInfo oneAtATimeOf;
@@ -164,6 +165,7 @@ namespace RimWorldMW2
             tryPrepareShot = Need(AccessTools.Method(ammoUserType, "TryPrepareShot", Type.EmptyTypes), "CompAmmoUser.TryPrepareShot");
             notifyShotFired = Need(AccessTools.Method(ammoUserType, "Notify_ShotFired", new[] { typeof(int) }), "CompAmmoUser.Notify_ShotFired");
             loadAmmo = Need(AccessTools.Method(ammoUserType, "LoadAmmo", new[] { typeof(Thing), typeof(bool) }), "CompAmmoUser.LoadAmmo");
+            tryUnload = Need(AccessTools.Method(ammoUserType, "TryUnload", new[] { typeof(bool) }), "CompAmmoUser.TryUnload");
             tryFindAmmo = Need(AccessTools.Method(ammoUserType, "TryFindAmmoInInventory", new[] { typeof(Thing).MakeByRefType() }),
                 "CompAmmoUser.TryFindAmmoInInventory");
             reloadTimeOf = Field(ammoPropsType, "reloadTime");
@@ -292,9 +294,6 @@ namespace RimWorldMW2
             if (ammo == null) return true;
             try
             {
-                // Empty since MW2 last reloaded (say CE emptied it while RimWorld played the
-                // colonist): MW2 has already waited its reload.
-                if (Is(hasMagazineOf, ammo) && Count(magCountOf, ammo) <= 0) Refill(ammo);
                 return (bool)tryPrepareShot.Invoke(ammo, null);
             }
             catch (Exception e)
@@ -305,8 +304,8 @@ namespace RimWorldMW2
         }
 
         /// <summary>Uses up the ammo of a shot <see cref="ReadyShot"/> readied, as many rounds as
-        /// CE's own shot from <paramref name="verb"/> takes. A magazine it empties is refilled
-        /// at once, so it is full again while MW2 reloads.</summary>
+        /// CE's own shot from <paramref name="verb"/> takes. An emptied magazine stays empty
+        /// until MW2 reloads (<see cref="Reload"/>).</summary>
         internal static void ShotFired(Thing gun, Verb verb)
         {
             ThingComp ammo = AmmoUser(gun);
@@ -314,7 +313,6 @@ namespace RimWorldMW2
             try
             {
                 notifyShotFired.Invoke(ammo, new object[] { PerShot(ammo, verb) });
-                if (Is(hasMagazineOf, ammo) && Count(magCountOf, ammo) <= 0) Refill(ammo);
             }
             catch (Exception e)
             {
@@ -332,7 +330,30 @@ namespace RimWorldMW2
             return Mathf.Max(1, perShot);
         }
 
-        /// <summary>Fills the empty magazine from the inventory, as far as the ammo carried
+        /// <summary>The MW2 player started reloading <paramref name="gun"/>: CE reloads its
+        /// magazine at once, as its reload job would, while MW2 plays the reload out. The
+        /// rounds still in it go back to the inventory first (a gun that loads a round at a
+        /// time keeps them), then it is filled from there. Nothing for a gun CE doesn't feed.</summary>
+        internal static void Reload(Thing gun)
+        {
+            ThingComp ammo = AmmoUser(gun);
+            if (ammo == null || !Is(hasMagazineOf, ammo)) return;
+            try
+            {
+                int size = Count(magSizeOf, ammo);
+                if (Count(magCountOf, ammo) >= size) return;
+                // Keep a full-enough magazine when there is nothing to load it with.
+                if (Is(useAmmoOf, ammo) && !(bool)tryFindAmmo.Invoke(ammo, new object[] { null })) return;
+                tryUnload.Invoke(ammo, new object[] { false });
+                Refill(ammo);
+            }
+            catch (Exception e)
+            {
+                Log.ErrorOnce($"[RimWorldMW2] Combat Extended reload failed: {e}", 0x3C4E0007);
+            }
+        }
+
+        /// <summary>Fills the magazine from the inventory, as far as the ammo carried
         /// goes, without CE's reload job: that job (<c>TryStartReload</c>) takes the colonist
         /// over and would fight MW2 for it. Never called with no ammo to load, as CE's
         /// <c>LoadAmmo</c> would then send the colonist off to find some or change weapons.</summary>
@@ -360,9 +381,7 @@ namespace RimWorldMW2
         /// <c>mag</c> and <c>loaded</c>, its magazine's size and the rounds in it, and
         /// <c>reload</c>, CE's seconds to fill it from empty, for a gun with a magazine;
         /// <c>spare</c>, the ammo carried for it, while CE's ammo system is on. Nothing for a gun
-        /// CE doesn't feed. An empty magazine is filled first from any ammo carried, so what
-        /// MW2 reloads its clip with is loaded in RimWorld too, and stays there if the ammo
-        /// carried is then dropped.
+        /// CE doesn't feed.
         /// </summary>
         internal static void AmmoReport(Pawn pawn, Thing gun, Verb verb, Json json)
         {
@@ -372,7 +391,6 @@ namespace RimWorldMW2
             {
                 if (Is(hasMagazineOf, ammo))
                 {
-                    if (Count(magCountOf, ammo) <= 0) Refill(ammo);
                     int size = Count(magSizeOf, ammo);
                     json.Num("mag", (long)size)
                         .Num("loaded", (long)Mathf.Clamp(Count(magCountOf, ammo), 0, size))

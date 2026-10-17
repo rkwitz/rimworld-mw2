@@ -317,5 +317,10 @@ a scratch copy that already has the earlier patches (`add -N` makes new files sh
 - `0043-rimworld-art-starts-over.patch` (M25): when RimWorld's `textures` list starts over
   (the atlas was nearly full), pawns drop the pictures they were shown by until RimWorld sends
   theirs again. Independent of 0042 (pull request #3), which it applies with or without.
+- `0044-rimworld-ce-ammo-sync.patch` (M24, after 0042): MW2's clip is exactly what RimWorld
+  has `loaded` and its reserve the `spare` ammo carried, so the two counts match. The player
+  can reload at any time; starting a reload sends `player_reload`, and RimWorld reloads first,
+  so the reload ends with the clip at RimWorld's count. A shotgun's extra pellets go out as
+  `player_shot` with `pellet`, using no ammo.
 
 If the engine changes grow large, switch to a real fork and point `versions.json` at it.

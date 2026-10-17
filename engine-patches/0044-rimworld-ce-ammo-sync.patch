@@ -1,0 +1,275 @@
+diff --git a/crates/render_anim/src/minecraft_mining.rs b/crates/render_anim/src/minecraft_mining.rs
+--- a/crates/render_anim/src/minecraft_mining.rs
++++ b/crates/render_anim/src/minecraft_mining.rs
+@@ -109,7 +109,7 @@
+                         }
+                     }
+                 }
+-                sim::voxel::VoxelEvent::Ray { from, to, damage } => {
++                sim::voxel::VoxelEvent::Ray { from, to, damage, .. } => {
+                     // Blocks without collision the bullet passed through.
+                     for pos in blocks_on_segment(from, to) {
+                         if gone.contains(&pos) || !passable(world, pos) {
+diff --git a/crates/rimworld_world/src/lib.rs b/crates/rimworld_world/src/lib.rs
+--- a/crates/rimworld_world/src/lib.rs
++++ b/crates/rimworld_world/src/lib.rs
+@@ -549,6 +549,8 @@
+     gun_clip: Option<i32>,
+     gun_hold: f32,
+     gun_shots: i32,
++    /// M24: real seconds since the player last fired a round.
++    since_shot: f32,
+     armed_with: Option<Option<String>>,
+     /// The figures as bullets see them, by `sim::voxel` mob key (the index): pawn id, whether
+     /// it has a head to hit, and its block-space box.
+@@ -1124,10 +1126,15 @@
+         }
+         // The player's bullets since last frame, against last frame's targets.
+         let events = sim::voxel::take_events();
++        let reloaded = sim::voxel::take_reload();
+         if let (Some(pawn), Some(outbox)) = (floor.playing.clone(), outbox.as_deref()) {
+             for shot in player_shots(&floor, &authority, local.0, &pawn, &events) {
+                 outbox.send(&shot);
+             }
++            // M24: RimWorld reloads a Combat Extended magazine as MW2's reload starts.
++            if reloaded {
++                outbox.send(&BridgeMessage::PlayerReload { pawn });
++            }
+         }
+     }
+ 
+@@ -1498,10 +1505,11 @@
+ /// Fires the player's gun as RimWorld fires their colonist's (M15): its clip holds one
+ /// burst, its shots `between` apart, and once the burst is spent MW2 reloads, taking as long
+ /// as RimWorld's cooldown and aiming time (M16), at the game's speed `rate`. Its reserve
+-/// never runs out. Under Combat Extended (M24) the clip is the gun's magazine, never holding
+-/// more than RimWorld has loaded: MW2 holds fire for the cooldown and aiming time after each
+-/// burst, and reloads only once the clip is empty, taking as long as CE's reload and the
+-/// aiming time. A gun with no CE ammo left, loaded or carried, has an empty clip and reserve.
++/// never runs out. Under Combat Extended (M24) the clip is the gun's magazine, holding what
++/// RimWorld has loaded, and the reserve the ammo the colonist carries: MW2 holds fire for the
++/// cooldown and aiming time after each burst, and a reload, at any time, takes as long as
++/// CE's and the aiming time (RimWorld reloads as it starts, `player_reload`). A gun with no
++/// CE ammo left, loaded or carried, has an empty clip and reserve.
+ /// `None` (no gun, or not playing) leaves MW2's own guns as they were.
+ fn fire_like_rimworld(floor: &mut FlatFloor, authority: &mut net::AuthorityWorld, local: sim::ClientId, gun: Option<rimworld_bridge::GunTiming>, rate: f32, dt: f32) {
+     let Some(gun) = gun else {
+@@ -1516,11 +1524,10 @@
+     let dry = gun.dry();
+     let rounds = match gun.loaded {
+         _ if dry => 0,
+-        // RimWorld fills its magazine as soon as a shot empties it, so it is only seen empty
+-        // when it can't be: then the whole magazine, not to cut MW2's reload short.
+-        Some(loaded) if fed && loaded > 0 => clip_size(&gun).min(loaded as i32),
++        Some(loaded) if fed => clip_size(&gun).min(loaded as i32),
+         _ => clip_size(&gun),
+     };
++    floor.since_shot += dt;
+     let burst = gun.burst.clamp(1, 1000) as i32;
+     floor.gun_hold = (floor.gun_hold - dt * rate.max(0.1)).max(0.0);
+     let clip = authority.0.held_clip(local);
+@@ -1529,6 +1536,7 @@
+         // what RimWorld has loaded.
+         if now < before && before <= rounds {
+             floor.gun_shots += 1;
++            floor.since_shot = 0.0;
+             floor.gun_hold = if now == 0 {
+                 // The last of the clip: the reload that follows is RimWorld's wait.
+                 0.0
+@@ -1548,9 +1556,16 @@
+         _ => gun.cooldown + gun.warmup,
+     } / rate.max(0.1);
+     let reload_ms = (reload * 1000.0).round().clamp(100.0, 30_000.0) as i32;
+-    sim::voxel::set_magazine(Some(sim::voxel::Magazine { client: local.0, rounds, hold: floor.gun_hold > 0.0, reload_ms, fed, dry }));
++    // RimWorld's count catches up with MW2's clip a snapshot or two after a round.
++    let top_up = floor.since_shot > TOP_UP_SECONDS;
++    let spare = gun.spare.filter(|_| fed).map(|spare| spare.min(i32::MAX as u32) as i32);
++    sim::voxel::set_magazine(Some(sim::voxel::Magazine { client: local.0, rounds, hold: floor.gun_hold > 0.0, reload_ms, fed, spare, top_up, dry }));
+ }
+ 
++/// M24: how long after the player's last round RimWorld's `loaded` is taken to have caught
++/// up with MW2's clip, in real seconds (snapshots come about ten times a second).
++const TOP_UP_SECONDS: f32 = 0.5;
++
+ /// Each figure as bullets see it: pawn id, what parts a bullet can strike, and a
+ /// block-space box around it.
+ fn targets(figures: &HashMap<String, Figure>, playing: Option<&str>, cutouts: &HashMap<u16, [f32; 4]>) -> Vec<(String, Struck, [f64; 6])> {
+@@ -1614,7 +1629,7 @@
+     for event in events {
+         match *event {
+             sim::voxel::VoxelEvent::MobShot { key, damage, from } if mine(&from) => struck = Some((key, damage)),
+-            sim::voxel::VoxelEvent::Ray { from, to, .. } if mine(&from) => {
++            sim::voxel::VoxelEvent::Ray { from, to, round, .. } if mine(&from) => {
+                 let hit = struck.take().and_then(|(key, damage)| Some((floor.targets.get(key as usize)?, damage)));
+                 let (target, part, damage) = match hit {
+                     Some(((id, body, bounds), damage)) => {
+@@ -1631,6 +1646,7 @@
+                     target,
+                     part,
+                     damage,
++                    pellet: !round,
+                 });
+             }
+             _ => {}
+@@ -6075,13 +6091,17 @@
+         let events = [
+             // A head shot on "a", then a miss, then someone else's bullet.
+             MobShot { key: 0, damage: 40.0, from: eye },
+-            Ray { from: eye, to: [21.2, 1.7, 21.0], damage: 30.0 },
+-            Ray { from: eye, to: [0.0, 0.0, 21.0], damage: 30.0 },
++            Ray { from: eye, to: [21.2, 1.7, 21.0], damage: 30.0, round: true },
++            Ray { from: eye, to: [0.0, 0.0, 21.0], damage: 30.0, round: true },
+             MobShot { key: 0, damage: 30.0, from: [20.0, 1.6, 60.0] },
+-            Ray { from: [20.0, 1.6, 60.0], to: [21.0, 1.0, 21.6], damage: 30.0 },
++            Ray { from: [20.0, 1.6, 60.0], to: [21.0, 1.0, 21.6], damage: 30.0, round: true },
++            // Another pellet of the round before (M24): it uses no ammo in RimWorld.
++            Ray { from: eye, to: [0.0, 0.5, 20.0], damage: 30.0, round: false },
+         ];
+         let shots = shots_from(&floor, eye, "m4_mp", "me", &events);
+-        assert_eq!(shots.len(), 2);
++        assert_eq!(shots.len(), 3);
++        let pellets: Vec<bool> = shots.iter().map(|shot| matches!(shot, BridgeMessage::PlayerShot { pellet: true, .. })).collect();
++        assert_eq!(pellets, [false, false, true]);
+         let BridgeMessage::PlayerShot { from, to, target, part, damage, .. } = &shots[0] else { panic!() };
+         assert_eq!((*from, *to), ([20.0, 1.6, 239.5], [10.6, 1.7, 239.5]), "RimWorld z grows north, in cells");
+         assert_eq!((target.as_deref(), part.as_deref(), *damage), (Some("a"), Some("head"), Some(40.0)));
+diff --git a/crates/sim/src/combat.rs b/crates/sim/src/combat.rs
+--- a/crates/sim/src/combat.rs
++++ b/crates/sim/src/combat.rs
+@@ -845,6 +845,7 @@
+                 }
+                 WeaponTickEvent::ReloadStarted => {
+                     apply_player_anim_event(world, *id, ANIM_ET_RELOAD);
++                    crate::voxel::note_reload(id.0);
+                     let hand = &hands[_hand_i as usize];
+                     let event = begin_reload_event(&facts, hand.clip);
+                     if let Some(ps) = world.player_mut(*id) {
+@@ -1272,7 +1273,7 @@
+                 stop = std::array::from_fn(|k| em.origin[k] + (first_surface[k] - em.origin[k]) * (dist / length));
+             }
+             let ray_damage = bullet_damage_at_distance(&facts, 0.0).max(0) as f32;
+-            crate::voxel::push_ray(em.origin, stop, ray_damage);
++            crate::voxel::push_ray(em.origin, stop, ray_damage, em.pellet.0 == 0 && bounces == 0);
+         }
+         for segment in &segments {
+             let exit = segment.surface_flags & fx_iw4::FX_IMPACT_EXIT_SURFACE_FLAG != 0;
+diff --git a/crates/sim/src/item.rs b/crates/sim/src/item.rs
+--- a/crates/sim/src/item.rs
++++ b/crates/sim/src/item.rs
+@@ -188,10 +188,15 @@
+             if let Some(magazine) = crate::voxel::magazine(id.0) {
+                 // A RimWorld colonist's gun: a burst to a clip, emptied by firing and filled
+                 // by reloading, from a reserve that never runs out; under Combat Extended
+-                // (M24) none at all once its ammo is gone.
+-                let rounds = magazine.rounds.clamp(if magazine.dry { 0 } else { 1 }, facts.clip_size.max(1));
+-                let reserve = if magazine.dry { 0 } else { full_stock };
+-                let wrong = |stock: i32| stock < reserve || (magazine.dry && stock > 0);
++                // (M24) the magazine RimWorld has loaded, and the ammo the colonist carries.
++                let rounds = magazine.rounds.clamp(if magazine.dry || magazine.fed { 0 } else { 1 }, facts.clip_size.max(1));
++                let reserve = match magazine.spare {
++                    _ if magazine.dry => 0,
++                    Some(spare) if magazine.top_up => spare.max(0) + (rounds - clip_r).max(0),
++                    Some(spare) => spare.max(0),
++                    None => full_stock,
++                };
++                let wrong = |stock: i32| if magazine.spare.is_some() || magazine.dry { stock != reserve } else { stock < reserve };
+                 if clip_r > rounds || clip_l > 0 || wrong(stock) {
+                     set_ammo_on_ps(world, &mut ps, weapon, clip_r.min(rounds), 0, reserve);
+                 }
+diff --git a/crates/sim/src/script_player.rs b/crates/sim/src/script_player.rs
+--- a/crates/sim/src/script_player.rs
++++ b/crates/sim/src/script_player.rs
+@@ -801,14 +801,8 @@
+         cmd.buttons &= !(buttons::ATTACK | buttons::THROW | buttons::ADS | buttons::MELEE_CHARGE);
+     }
+     // A RimWorld colonist's gun between its shots and bursts (M15).
+-    if let Some(magazine) = crate::voxel::magazine(id.0) {
+-        if magazine.hold {
+-            cmd.buttons &= !buttons::ATTACK;
+-        }
+-        // A Combat Extended magazine is reloaded once empty, when RimWorld refills it (M24).
+-        if magazine.fed && held != 0 && ammo_clip(world, id, held) > 0 {
+-            cmd.buttons &= !buttons::RELOAD;
+-        }
++    if crate::voxel::magazine(id.0).is_some_and(|magazine| magazine.hold) {
++        cmd.buttons &= !buttons::ATTACK;
+     }
+     if controls.offhands_disabled || controls.weapons_disabled {
+         cmd.buttons &= !(buttons::FRAG | buttons::SMOKE);
+diff --git a/crates/sim/src/voxel.rs b/crates/sim/src/voxel.rs
+--- a/crates/sim/src/voxel.rs
++++ b/crates/sim/src/voxel.rs
+@@ -117,8 +117,10 @@
+     /// done at that range, from this block point.
+     MobShot { key: u64, damage: f32, from: [f64; 3] },
+     /// A bullet's path through the air, in blocks, up to what stopped it:
+-    /// blocks without collision on it (grass, flowers) take its damage.
+-    Ray { from: [f64; 3], to: [f64; 3], damage: f32 },
++    /// blocks without collision on it (grass, flowers) take its damage. `round`
++    /// is the first pellet of a round as it left the gun, not another pellet
++    /// or a ricochet.
++    Ray { from: [f64; 3], to: [f64; 3], damage: f32, round: bool },
+ }
+ 
+ static EVENTS: std::sync::Mutex<Vec<VoxelEvent>> = std::sync::Mutex::new(Vec::new());
+@@ -190,9 +192,17 @@
+     /// How long a reload takes, in milliseconds (M16: as long as RimWorld's cooldown and
+     /// aiming); 0 for MW2's own.
+     pub reload_ms: i32,
+-    /// M24: the clip is a Combat Extended magazine, holding more than a burst: the player
+-    /// reloads only once it is empty, as RimWorld refills it.
++    /// M24: the clip is a Combat Extended magazine, holding more than a burst, and `rounds`
++    /// is what RimWorld has loaded in it: RimWorld reloads it when the player starts
++    /// reloading ([`take_reload`]).
+     pub fed: bool,
++    /// M24: the Combat Extended ammo carried outside the magazine, the reserve; `None`, a
++    /// reserve that never runs out.
++    pub spare: Option<i32>,
++    /// M24: no round fired lately, so `rounds` has caught up with the clip: the reserve also
++    /// holds what RimWorld has loaded beyond the clip, so a reload ends with the clip at
++    /// `rounds` (RimWorld reloads first, as the reload starts).
++    pub top_up: bool,
+     /// M24: no Combat Extended ammo left, loaded or carried: the clip and reserve are empty
+     /// (`rounds` is 0).
+     pub dry: bool,
+@@ -213,6 +223,20 @@
+     MAGAZINE.read().ok().and_then(|held| *held).filter(|m| m.client == client)
+ }
+ 
++static RELOAD_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++
++/// M24: the player with a [`Magazine`] started a reload.
++pub(crate) fn note_reload(client: u32) {
++    if magazine(client).is_some() {
++        RELOAD_STARTED.store(true, std::sync::atomic::Ordering::Relaxed);
++    }
++}
++
++/// M24: whether the player with the [`Magazine`] started a reload since this was last asked.
++pub fn take_reload() -> bool {
++    RELOAD_STARTED.swap(false, std::sync::atomic::Ordering::Relaxed)
++}
++
+ /// The nearest mob on the map-space segment `start`..`end`: its key, the
+ /// distance to it in map units and how far up its box the bullet struck
+ /// (0 at the feet, 1 at the top).
+@@ -255,8 +279,8 @@
+     best.map(|(key, t, up)| (key, (t * length) as f32, up as f32))
+ }
+ 
+-/// A bullet's path from map point `start` to `end`.
+-pub(crate) fn push_ray(start: [f32; 3], end: [f32; 3], damage: f32) {
++/// A bullet's path from map point `start` to `end`; `round` as [`VoxelEvent::Ray`].
++pub(crate) fn push_ray(start: [f32; 3], end: [f32; 3], damage: f32, round: bool) {
+     let Ok(world) = WORLD.read() else {
+         return;
+     };
+@@ -265,7 +289,7 @@
+     };
+     let (from, to) = (to_block(world.origin, start), to_block(world.origin, end));
+     if let Ok(mut events) = EVENTS.lock() {
+-        events.push(VoxelEvent::Ray { from, to, damage });
++        events.push(VoxelEvent::Ray { from, to, damage, round });
+     }
+ }
+ 

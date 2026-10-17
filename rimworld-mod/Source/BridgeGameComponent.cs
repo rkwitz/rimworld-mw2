@@ -195,7 +195,10 @@ namespace RimWorldMW2
                     float[] from = message.Nums("from"), to = message.Nums("to");
                     if (message.Str("pawn") != null && from?.Length == 3 && to?.Length == 3)
                         PlayerShots.Fired(message.Str("pawn"), new Vector3(from[0], 0f, from[2]), new Vector3(to[0], 0f, to[2]),
-                            message.Str("target"), message.Str("part"), message.Num("damage") ?? 0f);
+                            message.Str("target"), message.Str("part"), message.Num("damage") ?? 0f, message.Str("pellet") == "true");
+                    break;
+                case "player_reload":
+                    if (message.Str("pawn") != null) PlayerShots.Reloaded(message.Str("pawn"));
                     break;
                 case "spectate":
                     float? sx = message.Num("x"), sz = message.Num("z");
