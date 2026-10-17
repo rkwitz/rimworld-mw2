@@ -20,11 +20,12 @@ namespace RimWorldMW2
         public const float DamageScale = 0.3f;
 
         /// <summary>Look-alike bullets in flight: they land without touching anything.</summary>
-        private static readonly HashSet<Projectile> lookAlikes = new HashSet<Projectile>();
+        private static readonly HashSet<Thing> lookAlikes = new HashSet<Thing>();
 
-        internal static bool IsLookAlike(Projectile projectile) => lookAlikes.Contains(projectile);
+        /// <summary>A RimWorld <see cref="Projectile"/>, or Combat Extended's own.</summary>
+        internal static bool IsLookAlike(Thing projectile) => lookAlikes.Contains(projectile);
 
-        internal static void Forget(Projectile projectile) => lookAlikes.Remove(projectile);
+        internal static void Forget(Thing projectile) => lookAlikes.Remove(projectile);
 
         /// <summary>A <c>player_shot</c>: <paramref name="from"/> and <paramref name="to"/> are
         /// RimWorld <c>x</c> and <c>z</c>; <paramref name="part"/> is where it struck (<see cref="Part"/>).</summary>
@@ -36,14 +37,28 @@ namespace RimWorldMW2
             if (shooter == null || shooter.ThingID != id) return;
             Thing gun = shooter.equipment?.Primary;
             VerbProperties verb = gun?.def?.Verbs?.FirstOrDefault();
-            ShowBullet(shooter, gun, verb, from, to, map);
+            // Combat Extended fires the loaded ammo's bullet, not the gun's default one, and
+            // uses that ammo up: with none loaded or carried, the shot does nothing.
+            Verb shooting = shooter.equipment?.PrimaryEq?.PrimaryVerb;
+            if (!CombatExtendedCompat.ReadyShot(gun)) return;
+            ThingDef ceBullet = CombatExtendedCompat.Projectile(shooting);
+            CombatExtendedCompat.ShotFired(gun, shooting);
+            ShowBullet(shooter, gun, shooting, ceBullet ?? verb?.defaultProjectile, from, to, map);
             if (target == null || damage <= 0f) return;
             Pawn victim = map.mapPawns.AllPawnsSpawned.FirstOrDefault(p => p.ThingID == target);
             if (victim == null || victim.Dead) return;
             float armorPenetration = verb?.defaultProjectile?.projectile?.GetArmorPenetration(gun) ?? 0.15f;
+            ThingDef weapon = gun?.def;
+            // CE measures armour and penetration on its own scale, and names the bullet as the
+            // weapon so a deflected round can turn blunt (as BulletCE does).
+            if (CombatExtendedCompat.SharpPenetration(ceBullet, gun, out float cePenetration))
+            {
+                armorPenetration = cePenetration;
+                weapon = ceBullet;
+            }
             BodyPartRecord struck = Part(victim, part);
             var hit = new DamageInfo(DamageDefOf.Bullet, Mathf.Max(1f, damage * DamageScale), armorPenetration,
-                (victim.Position - shooter.Position).AngleFlat, shooter, struck, gun?.def, intendedTarget: victim);
+                (victim.Position - shooter.Position).AngleFlat, shooter, struck, weapon, intendedTarget: victim);
             victim.TakeDamage(hit);
         }
 
@@ -86,17 +101,23 @@ namespace RimWorldMW2
             return false;
         }
 
-        private static void ShowBullet(Pawn shooter, Thing gun, VerbProperties verb, Vector3 from, Vector3 to, Map map)
+        private static void ShowBullet(Pawn shooter, Thing gun, Verb verb, ThingDef bulletDef, Vector3 from, Vector3 to,
+            Map map)
         {
-            verb?.soundCast?.PlayOneShot(new TargetInfo(shooter.Position, map));
-            ThingDef bulletDef = verb?.defaultProjectile;
+            verb?.verbProps?.soundCast?.PlayOneShot(new TargetInfo(shooter.Position, map));
             if (bulletDef == null) return;
             var land = new IntVec3((int)to.x, 0, (int)to.z);
             if (!land.InBounds(map)) land = land.ClampInsideMap(map);
             if (lookAlikes.Count > 512) lookAlikes.RemoveWhere(p => p.Destroyed);
-            var bullet = (Projectile)GenSpawn.Spawn(bulletDef, shooter.Position, map);
+            Thing bullet = GenSpawn.Spawn(bulletDef, shooter.Position, map);
             lookAlikes.Add(bullet);
-            bullet.Launch(shooter, new Vector3(from.x, 0f, from.z), land, land, ProjectileHitFlags.None, false, gun);
+            if (bullet is Projectile projectile)
+                projectile.Launch(shooter, new Vector3(from.x, 0f, from.z), land, land, ProjectileHitFlags.None, false, gun);
+            else if (!CombatExtendedCompat.LaunchLookAlike(bullet, shooter, gun, verb, from, land))
+            {
+                lookAlikes.Remove(bullet);
+                bullet.Destroy();
+            }
         }
     }
 

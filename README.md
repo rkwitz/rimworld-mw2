@@ -45,6 +45,8 @@ Games (Steam):
 
 - **RimWorld 1.6**, with **[Harmony](https://steamcommunity.com/sharedfiles/filedetails/?id=2009463077)**
   from the Steam Workshop (click Subscribe).
+  [Combat Extended](https://github.com/CombatExtended-Continued/CombatExtended) is optional
+  and works too: put the bridge below it in the mod list.
 - **Call of Duty: Modern Warfare 2 (2009)**, the multiplayer files that Steam installs with
   it. No DLC is needed.
 

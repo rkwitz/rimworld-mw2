@@ -649,6 +649,31 @@ pub struct GunTiming {
     /// throws it with fire or G ([`Message::PlayerThrow`]), not as a gun.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub throw: Option<f32>,
+    /// M24: under Combat Extended, the gun's magazine: how many rounds it holds. MW2's clip
+    /// is this instead of a burst, and the gun still waits `cooldown` and `warmup` after each
+    /// burst. Absent for a gun without one (and without CE).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mag: Option<u32>,
+    /// M24: rounds in that magazine now. RimWorld uses a round for each `player_shot` and fills
+    /// the magazine again as soon as it is empty, so MW2's clip never holds more than this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loaded: Option<u32>,
+    /// M24: seconds of game time Combat Extended takes to fill that magazine from empty:
+    /// MW2's reload takes as long (with `warmup` after it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reload: Option<f32>,
+    /// M24: under Combat Extended's ammo system, the ammo the colonist carries for the gun
+    /// outside its magazine. 0 with nothing `loaded` (or, for a gun without a magazine, at
+    /// all): the gun is dry, and `player_shot` does nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spare: Option<u32>,
+}
+
+impl GunTiming {
+    /// M24: nothing left to fire, in the magazine or carried.
+    pub fn dry(&self) -> bool {
+        self.spare == Some(0) && self.loaded.unwrap_or(0) == 0
+    }
 }
 
 /// Something a pawn carries (M15): its picture (a cut-out index into `textures`; a person's
@@ -700,5 +725,29 @@ mod tests {
         let hello = r#"{"t":"hello","side":"rimworld","protocol":0,"game_version":"1.6.4871 rev1234"}"#;
         assert!(matches!(Message::from_line(hello).unwrap(), Message::Hello { side: Side::Rimworld, protocol: 0, .. }));
         assert_eq!(Message::from_line(r#"{"t":"tick","tick":600}"#).unwrap(), Message::Tick { tick: 600 });
+    }
+
+    fn player_gun(line: &str) -> GunTiming {
+        match Message::from_line(line).unwrap() {
+            Message::Snapshot { player_gun: Some(gun), .. } => gun,
+            other => panic!("expected a snapshot with player_gun, got {other:?}"),
+        }
+    }
+
+    /// M24: a Combat Extended gun's magazine and ammo; without CE there are none.
+    #[test]
+    fn player_gun_ce_ammo() {
+        let ce = player_gun(
+            r#"{"t":"snapshot","tick":1,"pawns":[],"player_gun":{"burst":3,"between":0.17,"warmup":1.0,"cooldown":1.7,"mag":30,"loaded":12,"reload":4.6,"spare":90}}"#,
+        );
+        assert_eq!((ce.mag, ce.loaded, ce.reload, ce.spare), (Some(30), Some(12), Some(4.6), Some(90)));
+        assert!(!ce.dry());
+        let empty = player_gun(r#"{"t":"snapshot","tick":1,"pawns":[],"player_gun":{"burst":3,"between":0.17,"warmup":1.0,"cooldown":1.7,"mag":30,"loaded":0,"reload":4.6,"spare":0}}"#);
+        assert!(empty.dry());
+        let bow = player_gun(r#"{"t":"snapshot","tick":1,"pawns":[],"player_gun":{"burst":1,"between":0.0,"warmup":1.2,"cooldown":1.5,"spare":0}}"#);
+        assert!(bow.dry() && bow.mag.is_none());
+        let vanilla = player_gun(r#"{"t":"snapshot","tick":1,"pawns":[],"player_gun":{"burst":3,"between":0.17,"warmup":1.0,"cooldown":1.7}}"#);
+        assert_eq!((vanilla.mag, vanilla.loaded, vanilla.reload, vanilla.spare), (None, None, None, None));
+        assert!(!vanilla.dry());
     }
 }
