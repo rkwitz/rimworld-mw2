@@ -91,7 +91,7 @@ namespace RimWorldMW2
             // RimWorld's CutoutComplex shader does.
             Texture mask = mat.HasProperty("_MaskTex") ? mat.GetTexture("_MaskTex") : null;
             Color two = mask != null && mat.HasProperty("_ColorTwo") ? mat.GetColor("_ColorTwo") : tint;
-            string key = Safe(texture.name) + "_" + ColorUtility.ToHtmlStringRGB(tint)
+            string key = Name(texture) + "_" + ColorUtility.ToHtmlStringRGB(tint)
                 + (mask != null ? "_" + ColorUtility.ToHtmlStringRGB(two) : "")
                 + (linked >= 0 ? "_l" + linked : "") + (flip ? "_f" : "") + (cutout ? "_cut" : "") + (floor ? "_floor" : "");
             if (byKey.TryGetValue(key, out int index)) return index;
@@ -185,6 +185,29 @@ namespace RimWorldMW2
             }
             byKey[key] = index;
             return index;
+        }
+
+        /// <summary>The textures seen with each file name, first first.</summary>
+        private static readonly Dictionary<string, List<int>> sameName = new Dictionary<string, List<int>>();
+
+        /// <summary>
+        /// A texture's name for its pictures: its file name, and for a different texture with a
+        /// file name already seen, <c>_v</c> and how many came before it. Textures in different
+        /// folders can share a file name (Combat Extended's ammo: <c>FMJ_a</c> for every
+        /// calibre), and all of them showed as the first one.
+        /// </summary>
+        private static string Name(Texture texture)
+        {
+            string name = Safe(texture.name);
+            if (!sameName.TryGetValue(name, out List<int> ids)) sameName[name] = ids = new List<int>();
+            int id = texture.GetInstanceID();
+            int index = ids.IndexOf(id);
+            if (index < 0)
+            {
+                ids.Add(id);
+                index = ids.Count - 1;
+            }
+            return index == 0 ? name : name + "_v" + index;
         }
 
         private static string Safe(string name)
