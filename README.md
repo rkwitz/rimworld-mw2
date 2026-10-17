@@ -27,6 +27,9 @@ What works today:
   inventory. **Tab** brings RimWorld up, and RimWorld's own window is the minimap in the
   top-left corner.
 - You move as fast as your colonist does, slowed by injuries, trees and terrain.
+- Works with [Combat Extended](https://github.com/CombatExtended-Continued/CombatExtended):
+  CE's bullets, shells and explosions show in MW2, your shots use your colonist's CE ammo,
+  and MW2's clip, reserve and reload match their magazine and the ammo they carry.
 
 Progress and plans are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -130,7 +133,8 @@ python scripts\setup.py link-mod
 effect without copying anything.
 
 Start RimWorld once, open **Mods**, and enable **Harmony** and then **RimWorld x MW2 Bridge**,
-in that order with the bridge below Harmony. RimWorld restarts. Then close RimWorld.
+in that order with the bridge below Harmony. With Combat Extended, the order is Harmony,
+Combat Extended, then the bridge. RimWorld restarts. Then close RimWorld.
 
 ## Play
 
