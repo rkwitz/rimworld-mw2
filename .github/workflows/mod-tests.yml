@@ -1,0 +1,31 @@
+# Builds the RimWorld mod and runs its tests. Needs no game install: the mod builds against
+# Krafs.Rimworld.Ref, and the tests only run the files that use nothing but .NET.
+name: Mod tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "rimworld-mod/Source/**"
+      - "tests/**"
+      - "protocol/examples.ndjson"
+      - ".github/workflows/mod-tests.yml"
+  pull_request:
+    paths:
+      - "rimworld-mod/Source/**"
+      - "tests/**"
+      - "protocol/examples.ndjson"
+      - ".github/workflows/mod-tests.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Build the mod and run its tests
+        run: dotnet test tests/RimWorldMW2.Tests -c Release

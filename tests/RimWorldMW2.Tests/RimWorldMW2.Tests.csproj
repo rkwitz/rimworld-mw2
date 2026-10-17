@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Optional tests for the RimWorld mod: python scripts/setup.py test-mod (or dotnet test here).
+       Building this project also builds the whole mod, so a compile error anywhere in
+       rimworld-mod/Source fails the run. -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- RimWorld's reference assemblies can't run outside the game, so only the mod files that
+         use nothing but the .NET base library are compiled in and tested directly. -->
+    <Compile Include="../../rimworld-mod/Source/Json.cs" Link="Mod/Json.cs" />
+    <Compile Include="../../rimworld-mod/Source/JsonLine.cs" Link="Mod/JsonLine.cs" />
+    <Compile Include="../../rimworld-mod/Source/BridgeClient.cs" Link="Mod/BridgeClient.cs" />
+    <None Include="../../protocol/examples.ndjson" Link="examples.ndjson" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Build the mod itself first (into rimworld-mod/1.6/Assemblies, as build-mod does) without
+         referencing it: it targets net472 and RimWorld's assemblies. -->
+    <ProjectReference Include="../../rimworld-mod/Source/RimWorldMW2.csproj"
+                      ReferenceOutputAssembly="false"
+                      SkipGetTargetFrameworkProperties="true"
+                      SetTargetFramework="TargetFramework=net472"
+                      Private="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+</Project>

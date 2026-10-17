@@ -15,6 +15,7 @@ Usage:
     python scripts/setup.py defs          copy RimWorld's Defs XML (Core + owned DLC)
     python scripts/setup.py all           every step above, in order
     python scripts/setup.py build-mod     build the RimWorld mod DLL
+    python scripts/setup.py test-mod      optional: build the mod and run its tests
     python scripts/setup.py link-mod      link the mod into RimWorld's Mods folder
     python scripts/setup.py play          build the mod, patch the engine, start RimWorld
                                           and the engine on the rimworld:flat map
@@ -394,6 +395,13 @@ def cmd_build_mod(args) -> bool:
     return True
 
 
+def cmd_test_mod(args) -> bool:
+    step("Test RimWorld mod")
+    run(["dotnet", "test", str(REPO / "tests" / "RimWorldMW2.Tests"), "-c", "Release"])
+    ok("mod builds and its tests pass")
+    return True
+
+
 def cmd_link_mod(args) -> bool:
     step("Link mod into RimWorld")
     rimworld = find_rimworld(args.rimworld)
@@ -555,6 +563,7 @@ COMMANDS = {
     "defs": cmd_defs,
     "all": cmd_all,
     "build-mod": cmd_build_mod,
+    "test-mod": cmd_test_mod,
     "link-mod": cmd_link_mod,
     "play": cmd_play,
 }
