@@ -156,7 +156,7 @@ namespace RimWorldMW2
                 }
                 else if (thing is Pawn animal)
                 {
-                    Graphic body = animal.Drawer?.renderer?.BodyGraphic;
+                    Graphic body = BodyOf(animal);
                     if (body == null) return null;
                     tex = TextureExport.Of(body.MatAt(Rot4.South, animal), cutout: true);
                     size = body.drawSize.x;
@@ -198,7 +198,7 @@ namespace RimWorldMW2
         {
             try
             {
-                Graphic body = pawn.Drawer?.renderer?.BodyGraphic;
+                Graphic body = BodyOf(pawn);
                 if (body == null) return;
                 int north = TextureExport.Of(body.MatAt(Rot4.North, pawn), cutout: true);
                 // Art with no east picture draws its west one mirrored.
@@ -217,6 +217,21 @@ namespace RimWorldMW2
             {
                 // Art some mods draw their own way: IW4L shows nothing for it.
             }
+        }
+
+        /// <summary>
+        /// RimWorld's picture of <paramref name="pawn"/>'s body. RimWorld sets up a pawn's
+        /// pictures the first time it draws them, and it only draws what its camera shows: a
+        /// pawn it has not drawn yet (a pack coming in from the map's edge, far from the
+        /// colonist the camera follows) had none, so MW2 showed nothing until it came close.
+        /// Set up now, as RimWorld's own drawing does.
+        /// </summary>
+        private static Graphic BodyOf(Pawn pawn)
+        {
+            PawnRenderer renderer = pawn.Drawer?.renderer;
+            if (renderer == null) return null;
+            renderer.EnsureGraphicsInitialized();
+            return renderer.BodyGraphic;
         }
 
         private static string F(float v) => v.ToString("0.##", CultureInfo.InvariantCulture);

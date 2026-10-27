@@ -1,0 +1,372 @@
+diff --git a/crates/rimworld_bridge/src/lib.rs b/crates/rimworld_bridge/src/lib.rs
+--- a/crates/rimworld_bridge/src/lib.rs
++++ b/crates/rimworld_bridge/src/lib.rs
+@@ -142,6 +142,8 @@
+     pub gas: Option<Arc<Vec<GasPatch>>>,
+     /// The weather, from the latest `weather` (M21): rain, snow, fog, wind.
+     pub weather: Option<Weather>,
++    /// RimWorld's sky, from the latest `sky` (M26): daylight, its colour, the time of day.
++    pub sky: Option<Sky>,
+     /// Every bit of filth, from the latest `filth` (M21).
+     pub filth: Option<Arc<Vec<FilthState>>>,
+     /// Flecks RimWorld made since a game system last took them (M21).
+@@ -157,6 +159,24 @@
+     pub wind: f32,
+ }
+ 
++/// RimWorld's sky over the map in view (M26): the daylight on open ground, 0 to 1, and its
++/// colour; how far through the day it is (0 midnight, 0.5 noon), and how high the sun is as
++/// daylight, 0 to 1.
++#[derive(Debug, Clone, Copy, PartialEq)]
++pub struct Sky {
++    pub glow: f32,
++    pub color: [f32; 3],
++    pub day: f32,
++    pub sun: f32,
++}
++
++impl Default for Sky {
++    /// Noon, clear: as the floor was lit before RimWorld sent its sky.
++    fn default() -> Self {
++        Self { glow: 1.0, color: [1.0; 3], day: 0.5, sun: 1.0 }
++    }
++}
++
+ /// MW2's own window (a Windows handle), once the engine has found it: its `hello` tells
+ /// RimWorld, whose "Control in MW2" brings it up (M12+). 0 until then.
+ pub static OWN_WINDOW: AtomicI64 = AtomicI64::new(0);
+@@ -595,6 +615,12 @@
+                 }
+                 link.weather = Some(weather);
+             }
++            BridgeEvent::Received(Message::Sky { glow, color, day, sun }) => {
++                if link.sky.is_none() {
++                    report(&format!("sky: daylight {glow:.2}, {:.0}% through the day", day * 100.0));
++                }
++                link.sky = Some(Sky { glow, color, day, sun });
++            }
+             BridgeEvent::Received(Message::Filth { filth }) => {
+                 if link.filth.is_none() && !filth.is_empty() {
+                     report(&format!("filth: {}", filth.len()));
+diff --git a/crates/rimworld_world/src/lib.rs b/crates/rimworld_world/src/lib.rs
+--- a/crates/rimworld_world/src/lib.rs
++++ b/crates/rimworld_world/src/lib.rs
+@@ -197,7 +197,6 @@
+ const FLOOR_SMALL_CELLS: i32 = FLOOR_CELLS * SMALL as i32 / TILE as i32;
+ /// A cell grid line every this many cells, as RimWorld's own grid overlay.
+ const MAJOR_LINE: i32 = 10;
+-const FULL_BRIGHT: [u8; 2] = [15 * 16, 0];
+ /// Minimap pixels a side.
+ const MINIMAP_PIXELS: u32 = 512;
+ /// Seconds between tries at skipping the match start countdown.
+@@ -1303,8 +1302,12 @@
+         .map(|w| w.width() / w.height().max(1.0))
+         .unwrap_or(16.0 / 9.0);
+     let weather = link.as_deref().and_then(|link| link.weather).unwrap_or(CLEAR_WEATHER);
+-    view.environment = environment(eye, forward, aspect, floor.blocks() as f32, weather);
+-    view.eye_light = [15.0, 0.0];
++    let sky = link.as_deref().and_then(|link| link.sky).unwrap_or_default();
++    view.environment = environment(eye, forward, aspect, floor.blocks() as f32, weather, sky);
++    // MW2's own models (the player's arms and gun, trees, furniture) take the light where the
++    // eye is (M26): RimWorld's night and lamps.
++    let [sky_level, lamp] = levels_in(floor.lay(), eye[0].floor() as i32, eye[2].floor() as i32, 0);
++    view.eye_light = [f32::from(sky_level) / 16.0, f32::from(lamp) / 16.0];
+ }
+ 
+ /// Spawns land on the floor, spread around its middle, and anyone who falls
+@@ -2108,7 +2111,8 @@
+         }
+         if let Some(detail) = lay.detail {
+             for part in detail.parts(cx, cz) {
+-                add_part(&mut mesh, part, floor.atlas.as_deref());
++                let levels = lay.detail.map_or(detail::OPEN_LIGHT, |detail| detail.light_levels(part.at.0, part.at.1));
++                add_part(&mut mesh, part, floor.atlas.as_deref(), levels);
+             }
+         }
+         sim::voxel::set_chunk(cx, cz, VoxelChunk { min_y, height, shapes });
+@@ -2224,6 +2228,26 @@
+     lay.detail.map_or(1.0, |detail| detail.light(x, z))
+ }
+ 
++/// The sky and lamp light levels at block point `(x, y, z)`, as [`light_in`] (M26): above the
++/// roofs, open sky.
++fn levels_in(lay: Lay, x: i32, z: i32, y: i32) -> [u8; 2] {
++    if y >= BUILT_HEIGHT {
++        return detail::OPEN_LIGHT;
++    }
++    lay.detail.map_or(detail::OPEN_LIGHT, |detail| detail.light_levels(x, z))
++}
++
++/// Lights each vertex by where it stands (M26): open ground by RimWorld's daylight and its
++/// lamps, roofed ground as before.
++fn light_by_place(vertices: &mut [Vertex], lay: Option<Lay>) {
++    let Some(lay) = lay else { return };
++    for vertex in vertices {
++        let [x, y, z] = vertex.position;
++        let [sky, lamp] = levels_in(lay, x.floor() as i32, z.floor() as i32, y.floor() as i32);
++        (vertex.sky_light, vertex.block_light) = (f32::from(sky) / 16.0, f32::from(lamp) / 16.0);
++    }
++}
++
+ /// The faces of one block that are not against another solid block. With `tree_models`,
+ /// trees are not blocks, so they hide nothing.
+ fn add_block(mesh: &mut SectionMesh, lay: Lay, [x, y, z]: [i32; 3], cell: Cell, tree_models: bool) {
+@@ -2320,6 +2344,7 @@
+         let start = along([x as f32, (y + 1) as f32, z as f32]).map(f32::floor);
+         // Lit as the cell it looks into, so a cave's walls are dark inside and not out.
+         let light = light_in(lay, x + dx, z + dz, y + dy);
++        let levels = levels_in(lay, x + dx, z + dz, y + dy);
+         let grey = (shade * light * 255.0) as u8;
+         for position in corners {
+             let [s, t] = along(position);
+@@ -2336,7 +2361,7 @@
+                 position,
+                 uv,
+                 color: [grey, grey, grey, 255],
+-                light: FULL_BRIGHT,
++                light: levels,
+                 pad: [0; 2],
+             });
+         }
+@@ -2399,7 +2424,7 @@
+ /// front; a `Look::Plain` thing only the picture's colour. Its other sides, and the whole of a thin part, take the picture's colour (M15:
+ /// the picture's edge run down the sides smeared chairs and stools into stripes that were
+ /// nothing of theirs).
+-fn add_part(mesh: &mut SectionMesh, part: &detail::Part, atlas: Option<&Atlas>) {
++fn add_part(mesh: &mut SectionMesh, part: &detail::Part, atlas: Option<&Atlas>, levels: [u8; 2]) {
+     let [x0, y0, z0, x1, y1, z1] = part.bounds;
+     let colour = match (part.tex, atlas) {
+         (Some(index), Some(atlas)) => picture_colour(atlas, index),
+@@ -2467,7 +2492,7 @@
+                 Some(index) => small_uv(index, part.sprite.uv(px.clamp(x0, x1), pz.clamp(z0, z1))),
+                 None => white,
+             };
+-            mesh.vertices.push(SectionVertex { position, uv, color: [color[0], color[1], color[2], 255], light: FULL_BRIGHT, pad: [0; 2] });
++            mesh.vertices.push(SectionVertex { position, uv, color: [color[0], color[1], color[2], 255], light: levels, pad: [0; 2] });
+         }
+         mesh.indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+     }
+@@ -3929,9 +3954,11 @@
+     add_plants(&mut vertices, &mut indices, cards, size);
+     add_standing(&mut vertices, &mut indices, cards, size);
+     add_doors(&mut vertices, &mut indices, cards, size);
++    let tracers_from = vertices.len();
+     for (tail, head) in tracers.iter().filter_map(Tracer::streak) {
+         add_segment(&mut vertices, &mut indices, tail, head, TRACER_HALF_WIDTH, [1.0, 0.86, 0.45]);
+     }
++    let tracers_to = vertices.len();
+     for shell in shells {
+         // RimWorld's own picture of it (M20), flying and then lying where it landed.
+         if let Some((tex, bounds)) = shell.tex.and_then(|tex| Some((tex, *cards.cutouts.get(&tex)?))) {
+@@ -3960,6 +3987,11 @@
+             add_held(&mut vertices, &mut indices, figure, at, &card, held, eye, cards.cutouts, color);
+         }
+     }
++    light_by_place(&mut vertices, cards.lay);
++    // Tracers glow, night or day.
++    for vertex in &mut vertices[tracers_from..tracers_to] {
++        vertex.block_light = 15.0;
++    }
+     (bytemuck::cast_slice(&vertices).to_vec(), indices)
+ }
+ 
+@@ -4061,9 +4093,11 @@
+     })
+ }
+ 
+-/// MinecraftOSS's environment uniform for a clear, still noon, laid out as
+-/// the Minecraft world's update lays it out.
+-fn environment(eye: [f64; 3], forward: Vec3, aspect: f32, size: f32, weather: rimworld_bridge::Weather) -> [[f32; 4]; 16] {
++/// MinecraftOSS's environment uniform, laid out as the Minecraft world's update lays it out,
++/// for RimWorld's `weather` and `sky` (M26): open ground, the sky and the fog as light as
++/// RimWorld's daylight and of its colour, so dark at night and in an eclipse; the sun and
++/// moon where the time of day puts them, and stars at night.
++fn environment(eye: [f64; 3], forward: Vec3, aspect: f32, size: f32, weather: rimworld_bridge::Weather, sky: rimworld_bridge::Sky) -> [[f32; 4]; 16] {
+     let right = forward.cross(Vec3::Y).normalize_or(Vec3::X);
+     let up = right.cross(forward).normalize_or(Vec3::Y);
+     let put = |v: Vec3| [v.x, v.y, v.z, 0.0];
+@@ -4071,23 +4105,38 @@
+     // rain and snow (M21).
+     let (fog_end, murk) = murk(size * 1.6, weather);
+     let fog_start = fog_end * (0.6 - 0.55 * murk);
+-    let grey = |clear: [f32; 3], dull: f32| clear.map(|c| c + (dull - c) * murk);
+-    let sky = grey([0.47, 0.65, 1.0], 0.55);
++    let glow = sky.glow.clamp(0.0, 1.0);
++    let tint = sky.color.map(|c| c.clamp(0.0, 1.0));
++    // Daylight on open ground, and on the sky and fog, which go darker still at night.
++    let light = NIGHT_LIGHT + (1.0 - NIGHT_LIGHT) * glow;
++    let dome = NIGHT_SKY + (1.0 - NIGHT_SKY) * glow;
++    let grey = |clear: [f32; 3], dull: f32| {
++        let mut colour = clear.map(|c| c + (dull - c) * murk);
++        for (c, t) in colour.iter_mut().zip(tint) {
++            *c *= t * dome;
++        }
++        colour
++    };
++    let sky_colour = grey([0.47, 0.65, 1.0], 0.55);
+     let fog = grey([0.75, 0.85, 1.0], 0.68);
+-    let sun = Vec3::new(0.3, 1.0, 0.2).normalize();
++    let (sun, moon, sun_shown, moon_shown, dusk) = celestial_bodies(sky);
++    // Night, an eclipse: stars.
++    let stars = 0.5 * (1.0 - 2.0 * glow).clamp(0.0, 1.0);
++    // MinecraftOSS lifts dark light towards its brightness option; less of it at night.
++    let lift = 0.25 + 0.25 * glow;
+     [
+         put(forward),
+         put(right),
+         put(up),
+         [eye[0] as f32, eye[1] as f32, eye[2] as f32, 0.0],
+-        [sky[0], sky[1], sky[2], 0.0],
++        [sky_colour[0], sky_colour[1], sky_colour[2], 0.0],
+         [fog[0], fog[1], fog[2], fog_end],
+-        [1.0, 1.0, 1.0, 1.0],
+-        [0.0, 0.0, 0.0, 0.0],
+-        [sun.x, sun.y, sun.z, 1.0],
+-        [-sun.x, -sun.y, -sun.z, 0.0],
+-        [1.0, 1.0, 1.0, 0.5],
+-        [aspect, 0.0, 0.0, 0.0],
++        [tint[0], tint[1], tint[2], light],
++        [1.0, 0.55, 0.25, dusk],
++        [sun.x, sun.y, sun.z, sun_shown],
++        [moon.x, moon.y, moon.z, moon_shown],
++        [dome, dome, dome, lift],
++        [aspect, 0.0, stars, 0.0],
+         [0.0, 0.0, 96.0, 160.0],
+         [fog_start, fog_end, fog_start * 1.5, fog_end],
+         [0.05, 0.05, 0.05, 0.0],
+@@ -4095,6 +4144,24 @@
+     ]
+ }
+ 
++/// How much of the day's light open ground keeps at night, and the sky and fog (M26).
++const NIGHT_LIGHT: f32 = 0.2;
++const NIGHT_SKY: f32 = 0.12;
++
++/// Where the sun and moon are as the time of day puts them (`day` 0.25 rising in the east,
++/// 0.5 overhead, 0.75 setting in the west; the moon across from it), block space; how much of
++/// each shows (the sun as much as its daylight reaches the ground, so not in an eclipse; the
++/// moon once the sun is down), and how red the sky is round a low sun.
++fn celestial_bodies(sky: rimworld_bridge::Sky) -> (Vec3, Vec3, f32, f32, f32) {
++    let angle = (sky.day - 0.25) * std::f32::consts::TAU;
++    // A little to the south, as from north of the equator.
++    let sun = Vec3::new(angle.cos(), angle.sin(), 0.25).normalize();
++    let shown = if sky.sun > 0.01 { (sky.glow / sky.sun).clamp(0.0, 1.0) } else { 0.0 };
++    let moon_shown = ((0.3 - sky.sun) / 0.3).clamp(0.0, 1.0);
++    let dusk = 0.5 * (1.0 - sun.y.abs() / 0.3).clamp(0.0, 1.0) * shown;
++    (sun, -sun, shown, moon_shown, dusk)
++}
++
+ /// No rain, snow, fog or wind: before RimWorld says otherwise.
+ const CLEAR_WEATHER: rimworld_bridge::Weather = rimworld_bridge::Weather { rain: 0.0, snow: 0.0, fog: 0.0, wind: 0.0 };
+ 
+@@ -4889,6 +4956,7 @@
+     if let Some(eye) = eye {
+         add_weather(&mut vertices, &mut indices, floor.lay(), eye, weather, floor.weather_time);
+     }
++    light_by_place(&mut vertices, Some(floor.lay()));
+     (bytemuck::cast_slice(&vertices).to_vec(), indices)
+ }
+ 
+@@ -5577,7 +5645,7 @@
+         let part = detail.parts(0, 0)[0].clone();
+         assert_eq!(part.look, Look::Whole);
+         let mut mesh = SectionMesh::default();
+-        add_part(&mut mesh, &part, None);
++        add_part(&mut mesh, &part, None, detail::OPEN_LIGHT);
+         let white = tile_uv(TILE_WHITE, [0.0, 0.0], [0.5, 0.5]);
+         // Faces in box_faces' order, four corners each: top, (no bottom), north, south, west, east.
+         let face = |n: usize| &mesh.vertices[n * 4..n * 4 + 4];
+@@ -5593,7 +5661,7 @@
+         let mut mesh = SectionMesh::default();
+         for part in detail.parts(0, 0) {
+             assert_eq!(part.look, Look::Top);
+-            add_part(&mut mesh, part, None);
++            add_part(&mut mesh, part, None, detail::OPEN_LIGHT);
+         }
+         assert!(mesh.vertices.iter().filter(|v| v.uv != white).count() > 8);
+     }
+@@ -6312,6 +6380,25 @@
+         assert!(rain_sight > FOG_SIGHT && rain_sight < clear && rain_murk < 1.0, "{rain_sight} {rain_murk}");
+     }
+ 
++    /// M26: night and an eclipse darken open ground, the sky and the fog; the sun rises in
++    /// the east and sets in the west, hidden in an eclipse, and the moon and stars come out.
++    #[test]
++    fn night_and_eclipses_darken_the_floor_and_its_sky() {
++        use rimworld_bridge::Sky;
++        let at = |sky| environment([0.0; 3], Vec3::X, 1.6, 500.0, CLEAR_WEATHER, sky);
++        let noon = at(Sky::default());
++        let night = at(Sky { glow: 0.0, color: [0.48, 0.6, 0.68], day: 0.0, sun: 0.0 });
++        let eclipse = at(Sky { glow: 0.0, color: [0.48, 0.6, 0.68], day: 0.5, sun: 1.0 });
++        assert_eq!(noon[6], [1.0, 1.0, 1.0, 1.0], "noon is lit as before");
++        assert!(night[6][3] < 0.25 && night[4][2] < 0.15 && night[5][0] < 0.15, "{night:?}");
++        assert!(night[11][2] > 0.0 && noon[11][2] == 0.0, "stars at night only");
++        assert!(night[9][3] == 1.0 && noon[9][3] == 0.0, "the moon at night only");
++        assert_eq!((noon[8][3], eclipse[8][3]), (1.0, 0.0), "no sun in an eclipse");
++        assert!(eclipse[6][3] < 0.25);
++        let sun = |day| celestial_bodies(Sky { day, ..Sky::default() }).0;
++        assert!(sun(0.25).x > 0.9 && sun(0.5).y > 0.9 && sun(0.75).x < -0.9);
++    }
++
+     #[test]
+     fn filth_flecks_rain_and_snow_draw_but_not_under_a_roof() {
+         let mut cutouts = HashMap::new();
+diff --git a/crates/rimworld_world/src/detail.rs b/crates/rimworld_world/src/detail.rs
+--- a/crates/rimworld_world/src/detail.rs
++++ b/crates/rimworld_world/src/detail.rs
+@@ -69,6 +69,11 @@
+     pub(crate) light: f32,
+ }
+ 
++/// Light levels (Minecraft's, times 16, sky then lamps) of open sky by day, and of roofed
++/// ground, whose light is in its colour (M26).
++pub(crate) const OPEN_LIGHT: [u8; 2] = [15 * 16, 0];
++pub(crate) const ROOFED_LIGHT: [u8; 2] = [0, 15 * 16];
++
+ /// No skin: the cell keeps MW2's texture.
+ const NO_SKIN: u16 = u16::MAX;
+ 
+@@ -323,6 +328,22 @@
+         }
+     }
+ 
++    /// The sky and lamp light levels (Minecraft's, times 16) of faces looking into the cell
++    /// holding block point `(x, z)` below the roofs (M26). Open ground takes RimWorld's
++    /// daylight, which its sky sets for the whole floor at once, and its lamps' and fires'
++    /// light; roofed ground only the light already in its colour ([`Detail::light`]), so
++    /// night and an eclipse leave it as it is.
++    pub(crate) fn light_levels(&self, x: i32, z: i32) -> [u8; 2] {
++        if self.roof_at(x, z) != roof::NONE {
++            return ROOFED_LIGHT;
++        }
++        let lamp = match (&self.lit, self.index(x, z)) {
++            (Some(lit), Some(i)) => lit[i].min(15),
++            _ => 0,
++        };
++        [15 * 16, lamp * 16]
++    }
++
+     /// This world lit by `glow` instead (M13): only the light changes, so a lamp switching on
+     /// or a fire spreading costs no more than the chunks it lights.
+     pub(crate) fn with_glow(&self, glow: Option<&Glow>) -> Self {
+@@ -1084,6 +1105,20 @@
+         assert_eq!(detail.light(b(1), b(1)), UNDER_ROOF);
+     }
+ 
++    /// M26: open ground takes the daylight and its lamps; roofed ground only its own light.
++    #[test]
++    fn open_ground_takes_daylight_and_lamps_roofed_ground_neither() {
++        let mut roof_cells = vec![roof::BUILT; 9];
++        roof_cells[5] = roof::NONE;
++        let roofs = Roofs { size: [3, 3], cells: roof_cells, hills: 1 };
++        // A lamp lights the open cell east of the room at half strength, and the room.
++        let glow = Glow::new([3, 3], "0000f8000");
++        let detail = Detail::new(3, None, Some(&roofs), None, &[], &[], Some(&glow));
++        assert_eq!(detail.light_levels(b(1), b(1)), ROOFED_LIGHT);
++        assert_eq!(detail.light_levels(b(2), b(1)), [15 * 16, 8 * 16]);
++        assert_eq!(detail.light(b(2), b(1)), 1.0, "open ground's colour is untouched");
++    }
++
+     #[test]
+     fn relighting_changes_only_the_light() {
+         let roofs = Roofs { size: [3, 3], cells: vec![roof::BUILT; 9], hills: 1 };

@@ -360,6 +360,19 @@ late in a long game the newest people (portraits are 3 pictures per look) had no
 - [x] People drop their old pictures when the list starts over, instead of showing whatever
       now has their numbers, until RimWorld sends theirs again (0043)
 
+## M26: night, eclipses and far animals
+Ryan, 2026-10-27: ten manhunter packs only showed up in MW2 when they came close, and MW2 was
+bright at night and during an eclipse.
+
+- [x] Animals and mechs RimWorld's camera has not drawn yet get their pictures set up as
+      RimWorld's own drawing would, so far packs show at once (mod)
+- [x] `sky` reports RimWorld's sky glow and colour (time of day, weather, lightning, eclipse,
+      aurora, fallout, haze, volcanic winter, unnatural darkness and other conditions), the
+      time of day and the sun's glow, ten times a second when it changes (mod)
+- [x] MW2's light, sky, fog, sun, moon and stars follow it; roofed ground takes no daylight;
+      lamp `glow` lights open ground too, so lamps and fires light the night (0045 + mod)
+- [ ] Not yet: RimWorld's sky saturation, thunder, and darkening MW2's own effects at night
+
 ## Balance notes
 MW2 fire rates are far above RimWorld bursts. v0 scales per-bullet damage by
 RimWorld DPS / MW2 DPS with one tunable multiplier. Weapon map starts as: assault rifle → ACR,

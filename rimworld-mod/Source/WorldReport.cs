@@ -209,9 +209,10 @@ namespace RimWorldMW2
         }
 
         /// <summary>
-        /// M12: how brightly lamps light each roofed cell, one hex digit a cell in terrain
-        /// order: RimWorld's own glow grid without daylight, <c>f</c> from where RimWorld counts
-        /// a cell as lit (half glow) up. Open sky is <c>0</c>; IW4L lights it fully anyway.
+        /// M12: how brightly lamps light each cell, one hex digit a cell in terrain order:
+        /// RimWorld's own glow grid without daylight, <c>f</c> from where RimWorld counts a cell
+        /// as lit (half glow) up. M26: open ground too, which lamps and fires light at night
+        /// (daylight comes in <c>sky</c>).
         /// </summary>
         private static string Glow(Map map)
         {
@@ -220,7 +221,6 @@ namespace RimWorldMW2
                 for (int x = 0; x < map.Size.x; x++)
                 {
                     var cell = new IntVec3(x, 0, z);
-                    if (!map.roofGrid.Roofed(cell)) { sb.Append('0'); continue; }
                     float lit = map.glowGrid.GroundGlowAt(cell, false, true) * 2f;
                     sb.Append("0123456789abcdef"[Mathf.Clamp(Mathf.RoundToInt(lit * 15f), 0, 15)]);
                 }

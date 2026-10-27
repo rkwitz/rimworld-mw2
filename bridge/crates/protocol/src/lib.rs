@@ -175,7 +175,8 @@ pub enum Message {
     Doors { doors: Vec<DoorState>, steps: u32 },
     /// How brightly lamps, torches and other glowers light every roofed cell (M12+), one hex
     /// digit a cell in the order of `terrain`'s cells: `0` dark, `f` as lit as RimWorld counts
-    /// "lit". Daylight is left out (IW4L shows open sky fully lit). Sent when any changes.
+    /// "lit". Daylight is left out: it comes in [`Message::Sky`]. From M26 open cells too,
+    /// which lamps and fires light at night. Sent when any changes.
     Glow { size: [i32; 2], cells: String },
     /// RimWorld's own window now shows over MW2's top left corner as its minimap (M16), or no
     /// longer does: MW2 draws no minimap of its own under it while `shown`.
@@ -205,6 +206,14 @@ pub enum Message {
         #[serde(default)]
         wind: f32,
     },
+    /// RimWorld's sky over the map in view (M26), after everything that changes it: the time
+    /// of day, the weather (overcast, a lightning flash) and game conditions (an eclipse, an
+    /// aurora, toxic fallout, volcanic winter and the rest). `glow` is the daylight on open
+    /// ground, 0 (night, an eclipse) to 1, and `color` its colour (`[r, g, b]`, 0 to 1,
+    /// RimWorld's sky colour); `day` is how far through the day it is, 0 midnight to 0.5 noon,
+    /// and `sun` how high the sun is as daylight, 0 below the horizon to 1, whatever hides it.
+    /// Sent when any changes, at most ten times a second.
+    Sky { glow: f32, color: [f32; 3], day: f32, sun: f32 },
     /// The filth near the MW2 player on the map in view (M21): blood, firefoam, fuel, vomit,
     /// ash, dirt and the rest, each splotch where RimWorld draws it: its picture (`tex`, a
     /// cut-out index into `textures`), `size` in cells, `x` and `z`, and `rot` degrees. Sent
@@ -756,6 +765,13 @@ mod tests {
         let vanilla = player_gun(r#"{"t":"snapshot","tick":1,"pawns":[],"player_gun":{"burst":3,"between":0.17,"warmup":1.0,"cooldown":1.7}}"#);
         assert_eq!((vanilla.mag, vanilla.loaded, vanilla.reload, vanilla.spare), (None, None, None, None));
         assert!(!vanilla.dry());
+    }
+
+    /// M26: the sky.
+    #[test]
+    fn sky() {
+        let sky = Message::from_line(r#"{"t":"sky","glow":0.05,"color":[0.48,0.6,0.68],"day":0.02,"sun":0}"#).unwrap();
+        assert_eq!(sky, Message::Sky { glow: 0.05, color: [0.48, 0.6, 0.68], day: 0.02, sun: 0.0 });
     }
 
     /// M24: a pellet uses no ammo, and is only written when it is one.

@@ -322,5 +322,9 @@ a scratch copy that already has the earlier patches (`add -N` makes new files sh
   can reload at any time; starting a reload sends `player_reload`, and RimWorld reloads first,
   so the reload ends with the clip at RimWorld's count. A shotgun's extra pellets go out as
   `player_shot` with `pellet`, using no ammo.
+- `0045-rimworld-sky-and-night.patch` (M26): MW2's daylight, sky, fog, sun, moon and stars
+  follow RimWorld's `sky` (night, eclipse, weather, lightning, game conditions). Roofed ground
+  and indoors take no daylight; open ground takes daylight plus RimWorld's lamp `glow`, so
+  outdoor lamps and fires light the night. Tracers stay bright.
 
 If the engine changes grow large, switch to a real fork and point `versions.json` at it.

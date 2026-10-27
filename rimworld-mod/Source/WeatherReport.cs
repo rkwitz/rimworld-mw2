@@ -24,13 +24,44 @@ namespace RimWorldMW2
         private const float FilthReach = 64f;
         private const int MaxFilth = 1500;
 
-        private static string sentWeather, sentFilth;
-        private static float weatherAt = -10f, filthAt = -10f;
+        /// <summary>The sky is looked at this often, real seconds: a lightning flash lasts
+        /// about half a second.</summary>
+        private const float SkySeconds = 0.1f;
+
+        private static string sentWeather, sentFilth, sentSky;
+        private static float weatherAt = -10f, filthAt = -10f, skyAt = -10f;
 
         public static void Reset()
         {
-            sentWeather = sentFilth = null;
-            weatherAt = filthAt = -10f;
+            sentWeather = sentFilth = sentSky = null;
+            weatherAt = filthAt = skyAt = -10f;
+        }
+
+        /// <summary>
+        /// The <c>sky</c> line due now, or null: how much daylight there is and its colour, as
+        /// RimWorld's sky has them after everything that changes it: the time of day, the
+        /// weather (overcast, a lightning flash), and game conditions (an eclipse, an aurora,
+        /// toxic fallout, volcanic winter, noxious haze, unnatural darkness and the rest); and
+        /// where the sun is in the day and how high, for MW2's sun, moon and stars.
+        /// </summary>
+        public static string PollSky()
+        {
+            Map map = PawnSnapshot.MapInView();
+            float now = Time.realtimeSinceStartup;
+            if (map == null || now - skyAt < SkySeconds) return null;
+            skyAt = now;
+            SkyTarget sky = map.skyManager.CurSky;
+            // A map RimWorld lights without a sky (in space, say) is lit fully.
+            bool unlit = map.Biome != null && map.Biome.disableSkyLighting;
+            Color colour = unlit ? Color.white : sky.colors.sky;
+            float glow = unlit ? 1f : map.skyManager.CurSkyGlow;
+            string line = Json.Msg("sky").Num("glow", Hundredth(glow))
+                .Raw("color", "[" + F(colour.r) + "," + F(colour.g) + "," + F(colour.b) + "]")
+                .Num("day", Hundredth(GenLocalDate.DayPercent(map)))
+                .Num("sun", Hundredth(GenCelestial.CurCelestialSunGlow(map))).ToString();
+            if (line == sentSky) return null;
+            sentSky = line;
+            return line;
         }
 
         /// <summary>The <c>weather</c> line due now, or null.</summary>
@@ -181,6 +212,8 @@ namespace RimWorldMW2
         }
 
         private static float Tenth(float v) => Mathf.Round(v * 10f) / 10f;
+
+        private static float Hundredth(float v) => Mathf.Round(v * 100f) / 100f;
 
         private static string F(float v) => (Mathf.Round(v * 100f) / 100f).ToString("0.##", CultureInfo.InvariantCulture);
     }

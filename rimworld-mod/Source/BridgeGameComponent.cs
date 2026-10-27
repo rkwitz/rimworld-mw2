@@ -117,6 +117,8 @@ namespace RimWorldMW2
                 client.Send(line);
             string weather = WeatherReport.PollWeather();
             if (weather != null) client.Send(weather);
+            string sky = WeatherReport.PollSky();
+            if (sky != null) client.Send(sky);
             string filth = WeatherReport.PollFilth();
             if (filth != null) SendAfterArt(filth);
             string flecks = FleckReport.Take();
